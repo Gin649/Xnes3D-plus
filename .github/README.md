@@ -32,6 +32,9 @@ RetroAchievements, save states, shaders and the console interface. For all of th
 - **3dSen profiles without converting on a PC.** In **Zaxnes Plus profiles**, choose **Import 3dSen
   profiles…**, pick 3dSen's profile bundle file, and every profile in it is converted on the
   device (see [3D profiles](#3d-profiles)).
+- **Community profiles in one tap.** **Get community profiles** in Zaxnes Plus profiles downloads
+  the community profiles listed in [`community/profiles.json`](../community/profiles.json), each
+  from its creator's own link, and credits who made it.
 - **Installs beside the official Zaxnes.** Zaxnes Plus has its own app ID
   (`io.github.gin649.zaxnes`), its own icon and a teal colour scheme, so both can be installed at
   once and are easy to tell apart. Each build installs over the last
@@ -84,8 +87,10 @@ its profiles go to `%LOCALAPPDATA%\Zaxnes\profiles`, and `.3dn` files you copy t
 are copied in at the next start.
 
 Free community profiles are shared in the
-[Profile Repository](https://itch.io/board/872690/profile-repository) of the 3dSen Maker forum;
-import them on the PC with **File ▸ Import a profile…**, then copy them over the same way. To make
+[Profile Repository](https://itch.io/board/872690/profile-repository) of the 3dSen Maker forum.
+The ones listed in [`community/profiles.json`](../community/profiles.json) come in with **Get
+community profiles** in Zaxnes Plus profiles (how to add one: [community/README.md](../community/README.md));
+others can be copied into your profiles folder or opened with Zaxnes Plus profiles. To make
 your own, use [3dSen Maker](https://geod.itch.io/3dsen-maker), Geod Studio's free profile editor.
 
 Without a profile, every game still plays, in 2D or in Zaxnes' default 3D.
@@ -103,7 +108,8 @@ The Zaxnes Plus changes are kept small so they could be offered back to Zaxnes:
 |---|---|
 | `rust/build/android/java/.../ZaxnesActivity.java` | passes a sent game on as `--rom`, and games sent while running |
 | `rust/build/android/java/.../LaunchedRom.java` | turns the sent ROM into a file the emulator can open |
-| `rust/build/android/java/.../ProfileFolder.java`, `ProfilesActivity.java` | Zaxnes Plus profiles: the 3dSen import and the profiles folder |
+| `rust/build/android/java/.../ProfilesActivity.java`, `ProfileFolder.java`, `CommunityProfiles.java` | Zaxnes Plus profiles: the 3dSen import, community profiles and the profiles folder |
+| `community/` | the list of community profiles |
 | `rust/crates/zax-android/src/lib.rs` | hands the activity's arguments to Zaxnes, and runs the 3dSen import for Zaxnes Plus profiles |
 | `rust/crates/zax-app/src/launch_origin.rs` | remembers that a launcher started the game |
 | `rust/crates/zax-app/src/application.rs` | opens a game sent while running |

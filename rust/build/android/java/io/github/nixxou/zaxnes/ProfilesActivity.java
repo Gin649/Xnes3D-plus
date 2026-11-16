@@ -16,8 +16,9 @@ import java.util.List;
 
 /**
  * The "Zaxnes profiles" screen (its own icon): imports 3dSen's profiles from the bundle file of a
- * 3dSen installation, picked anywhere on the device; picks the folder .3dn profiles are copied
- * from (ProfileFolder); and takes .3dn and .bundle files opened or shared from a file manager.
+ * 3dSen installation, picked anywhere on the device; gets the community profiles listed in
+ * community/profiles.json (CommunityProfiles); picks the folder .3dn profiles are copied from
+ * (ProfileFolder); and takes .3dn and .bundle files opened or shared from a file manager.
  *
  * <p>The Java here is compiled without lambdas (no LambdaMetafactory in android.jar), so the
  * listeners are written out in full.
@@ -44,6 +45,7 @@ public class ProfilesActivity extends Activity {
         final Uri tree = ProfileFolder.get(this);
         String[] items = {
             "Import 3dSen profiles…",
+            "Get community profiles",
             tree == null ? "Choose a profiles folder…" : "Profiles folder: " + folderName(tree) + " (change)",
             "Copy from the profiles folder now",
             "Close",
@@ -55,8 +57,9 @@ public class ProfilesActivity extends Activity {
                 public void onClick(DialogInterface d, int which) {
                     switch (which) {
                         case 0: pickBundle(); break;
-                        case 1: pickFolder(); break;
-                        case 2:
+                        case 1: getCommunityProfiles(); break;
+                        case 2: pickFolder(); break;
+                        case 3:
                             if (tree == null) {
                                 Toast.makeText(ProfilesActivity.this, "Choose a profiles folder first.", Toast.LENGTH_LONG).show();
                                 showMenu();
@@ -203,6 +206,42 @@ public class ProfilesActivity extends Activity {
                 }
             })
             .show();
+    }
+
+    // ---- community profiles -----------------------------------------------------------------
+
+    private void getCommunityProfiles() {
+        final AlertDialog working = new AlertDialog.Builder(this)
+            .setTitle("Getting community profiles…")
+            .setMessage("Each one is downloaded from its creator's own link.")
+            .setCancelable(false)
+            .show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final CommunityProfiles.Result r = CommunityProfiles.fetchAll(ProfilesActivity.this);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        working.dismiss();
+                        if (r.error != null) {
+                            showResult("Couldn't get community profiles", r.error);
+                            return;
+                        }
+                        StringBuilder text = new StringBuilder();
+                        if (r.listed == 0) {
+                            text.append("The list has no profiles yet.");
+                        } else {
+                            if (r.addedCount > 0) text.append("New or updated, thanks to their makers:\n").append(r.added).append('\n');
+                            if (r.upToDate > 0) text.append(r.upToDate).append(r.upToDate == 1 ? " profile was" : " profiles were").append(" already up to date.\n");
+                            if (r.failed.length() > 0) text.append("\nCouldn't be downloaded (try again later):\n").append(r.failed);
+                            text.append("\nThey are used the next time a game starts in Zaxnes.");
+                        }
+                        showResult(r.addedCount > 0 ? r.addedCount + " community profiles added" : "Community profiles", text.toString().trim());
+                    }
+                });
+            }
+        }).start();
     }
 
     // ---- profiles folder --------------------------------------------------------------------
