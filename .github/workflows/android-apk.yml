@@ -3,7 +3,8 @@ name: Android APK
 # Builds the Android APK of this fork (run it from the Actions tab). The fork's changes let a
 # frontend start a game directly: see ZaxnesActivity.getArguments and LaunchedRom.
 #
-# The fork installs as its own app, Zaxnes Plus (io.github.gin649.zaxnes), beside the official Zaxnes, and is
+# The fork installs as its own app, Zaxnes Plus (io.github.gin649.zaxnes, with its own icon and
+# colours: .github/fork/branding.py), beside the official Zaxnes, and is
 # signed with rust/build/android/fork.keystore so each build installs over the last one, keeping
 # its profiles and saves. That key is only for this personal fork.
 on:
@@ -45,12 +46,12 @@ jobs:
             rust/target-android
           key: android-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: The fork's own app id and name (Zaxnes Plus), so it sits beside the official Zaxnes
+      - name: Zaxnes Plus branding (app id, names, icon, colours)
         run: |
-          sed -i -e 's/package="io.github.nixxou.zaxnes"/package="io.github.gin649.zaxnes"/' \
-                 -e 's/android:label="Zaxnes"/android:label="Zaxnes Plus"/g' \
-                 -e 's/android:label="Zaxnes profiles"/android:label="Zaxnes Plus profiles"/g' rust/build/android/AndroidManifest.xml
-          grep -n 'package=\|android:label' rust/build/android/AndroidManifest.xml
+          python3 .github/fork/branding.py
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" compile --dir .github/fork/res -o "$RUNNER_TEMP/fork-res.zip"
+          echo "ZAXNES_EXTRA_RES=$RUNNER_TEMP/fork-res.zip" >> "$GITHUB_ENV"
+          git diff --stat
 
       - name: Stand-ins for the demo game's files
         # FlappyZaxNes and its 3D profile are built apart and kept out of the repository; empty

@@ -33,7 +33,8 @@ RetroAchievements, save states, shaders and the console interface. For all of th
   profiles…**, pick 3dSen's profile bundle file, and every profile in it is converted on the
   device (see [3D profiles](#3d-profiles)).
 - **Installs beside the official Zaxnes.** Zaxnes Plus has its own app ID
-  (`io.github.gin649.zaxnes`), so both can be installed at once. Each build installs over the last
+  (`io.github.gin649.zaxnes`), its own icon and a teal colour scheme, so both can be installed at
+  once and are easy to tell apart. Each build installs over the last
   one and keeps your profiles, saves and settings.
 - **Kept up to date.** Once a week, Zaxnes Plus brings in what's new in the official Zaxnes and
   builds a new version.
@@ -108,6 +109,7 @@ The Zaxnes Plus changes are kept small so they could be offered back to Zaxnes:
 | `rust/crates/zax-app/src/application.rs` | opens a game sent while running |
 | `rust/crates/zax-app/src/ui/handheld/mod.rs` | quitting goes back to the launcher |
 | `rust/crates/zax-app/src/demo_game.rs` | builds without the demo game's files |
+| `.github/fork/` | the Zaxnes Plus name, icon and colours, applied when the APK is built |
 
 ## Licence and credits
 
