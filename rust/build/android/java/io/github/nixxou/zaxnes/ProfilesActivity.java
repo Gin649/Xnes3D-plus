@@ -2,6 +2,7 @@ package io.github.nixxou.zaxnes;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -29,16 +30,35 @@ public class ProfilesActivity extends Activity {
     private void showMenu() {
         Uri tree = ProfileFolder.get(this);
         String where = tree == null ? "No folder picked yet." : "Folder: " + folderName(tree);
+        // written out in full: the APK's Java is compiled without lambdas (no LambdaMetafactory in android.jar)
         new AlertDialog.Builder(this)
             .setTitle("3D profiles")
             .setMessage(where + "\n\nNew and changed .3dn profiles in this folder (and its subfolders) are copied into Zaxnes each time it starts.")
-            .setPositiveButton(tree == null ? "Choose folder" : "Change folder", (d, w) -> pickFolder())
-            .setNeutralButton("Copy now", (d, w) -> {
-                toast(ProfileFolder.importAll(this));
-                finish();
+            .setPositiveButton(tree == null ? "Choose folder" : "Change folder", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    pickFolder();
+                }
             })
-            .setNegativeButton("Close", (d, w) -> finish())
-            .setOnCancelListener(d -> finish())
+            .setNeutralButton("Copy now", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    toast(ProfileFolder.importAll(ProfilesActivity.this));
+                    finish();
+                }
+            })
+            .setNegativeButton("Close", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    finish();
+                }
+            })
+            .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                @Override
+                public void onCancel(DialogInterface d) {
+                    finish();
+                }
+            })
             .show();
     }
 
