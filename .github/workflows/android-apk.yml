@@ -1,0 +1,64 @@
+name: Android APK
+
+# Builds the Android APK of this fork (run it from the Actions tab). The fork's changes let a
+# frontend start a game directly: see ZaxnesActivity.getArguments and LaunchedRom.
+#
+# The fork installs as its own app, Zaxnes Plus (io.github.gin649.zaxnes), beside the official Zaxnes, and is
+# signed with rust/build/android/fork.keystore so each build installs over the last one, keeping
+# its profiles and saves. That key is only for this personal fork.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK parts the build script needs
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-34" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.2.12479018" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Rust (the version in rust-toolchain.toml) and cargo-ndk
+        working-directory: rust
+        run: |
+          rustup show
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --locked
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target-android
+          key: android-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: The fork's own app id and name (Zaxnes Plus), so it sits beside the official Zaxnes
+        run: |
+          sed -i -e 's/package="io.github.nixxou.zaxnes"/package="io.github.gin649.zaxnes"/' \
+                 -e 's/android:label="Zaxnes"/android:label="Zaxnes Plus"/g' rust/build/android/AndroidManifest.xml
+          grep -n 'package=\|android:label' rust/build/android/AndroidManifest.xml
+
+      - name: Build the APK
+        working-directory: rust
+        env:
+          ZAXNES_ANDROID_KEYSTORE: ${{ github.workspace }}/rust/build/android/fork.keystore
+          ZAXNES_ANDROID_KEYSTORE_PASSWORD: android
+        run: python3 -I build/package-android.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Zaxnes-android-fork
+          path: rust/target-android/package/*.apk

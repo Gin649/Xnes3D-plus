@@ -209,6 +209,10 @@ impl ZaxApplication {
     }
 }
 
+/// The file a frontend writes a ROM's path to, in the user data folder, to open it while Zaxnes
+/// runs (see `Running::take_launch_request`).
+const LAUNCH_REQUEST_FILE: &str = "launch-request.txt";
+
 /// Everything a run owns once the window is open.
 struct Running {
     options: AppOptions,
@@ -496,6 +500,7 @@ impl Running {
         self.reopen_the_audio_output();
         self.follow_the_editor_setting();
         self.load_the_asked_state();
+        self.take_launch_request();
         let frame_begin = self.clock.start();
         let busy_begin = Instant::now();
         let mark = self.clock.start();
@@ -958,6 +963,29 @@ impl Running {
     /// common slot index to look a game up in, a game's states being the files of its ROM.
     /// Q-102.
     // Q-102
+    /// A game sent while Zaxnes is already running. On Android the activity is sent the new game
+    /// (`onNewIntent`) and writes its path to `launch-request.txt` in the user data folder; it is
+    /// read here about twice a second and opened as from the ROM list.
+    fn take_launch_request(&mut self) {
+        if self.state.rendered_frames % 30 != 0 {
+            return;
+        }
+        let Some(root) = self.options.user_data_root.as_deref() else {
+            return;
+        };
+        let file = Path::new(root).join(LAUNCH_REQUEST_FILE);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            return;
+        };
+        let _ = std::fs::remove_file(&file);
+        let rom = text.trim();
+        if rom.is_empty() || !Path::new(rom).is_file() {
+            return;
+        }
+        log(&format!("opening '{rom}', sent while running."));
+        self.host.enqueue(Command::OpenRom, CommandArgs::of_text(rom));
+    }
+
     fn load_the_asked_state(&mut self) {
         let Some(slot) = self.pending_state_load.clone() else {
             return;

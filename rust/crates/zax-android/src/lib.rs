@@ -27,14 +27,35 @@ mod entry {
         Some(path.to_string_lossy().into_owned())
     }
 
-    /// Called by SDL once its activity is up. The arguments SDL passes are not used.
+    /// The arguments the activity passes on (`ZaxnesActivity.getArguments`): `--rom <file>` when
+    /// a frontend started it with a game. SDL puts a program name first, which is skipped.
+    fn passed_arguments(argc: c_int, argv: *mut *mut c_char) -> Vec<String> {
+        if argv.is_null() {
+            return Vec::new();
+        }
+        let count = usize::try_from(argc).unwrap_or(0);
+        (1..count)
+            .filter_map(|index| {
+                // SAFETY: SDL hands `argc` entries of `argv`, each null or NUL-terminated.
+                let item = unsafe { *argv.add(index) };
+                if item.is_null() {
+                    return None;
+                }
+                // SAFETY: checked non-null above; SDL's strings are NUL-terminated.
+                Some(unsafe { CStr::from_ptr(item) }.to_string_lossy().into_owned())
+            })
+            .collect()
+    }
+
+    /// Called by SDL once its activity is up.
     #[no_mangle]
-    pub extern "C" fn SDL_main(_argc: c_int, _argv: *mut *mut c_char) -> c_int {
+    pub extern "C" fn SDL_main(argc: c_int, argv: *mut *mut c_char) -> c_int {
         let mut arguments = vec!["--handheld".to_owned()];
         if let Some(root) = external_storage() {
             arguments.push("--userdata".to_owned());
             arguments.push(root);
         }
+        arguments.extend(passed_arguments(argc, argv));
         // A panic must not unwind into SDL's C code.
         std::panic::catch_unwind(|| zax_app::program::run(&arguments)).unwrap_or(1)
     }
