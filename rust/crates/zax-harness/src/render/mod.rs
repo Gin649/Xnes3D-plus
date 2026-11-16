@@ -94,6 +94,10 @@ zax-harness render --out <dir> --rom <file.nes> [--profile <title|file>] [--run 
   --angles <rx>,<ry>[,<rz>]  camera setpoint angles in degrees (default 0.81,0.81,0)
   --distance <d>           camera setpoint distance (default 104 / atan(FOV/2))
   --mesh <algorithm>       greedy (default), marching or multicolor (REQ-E3D-340)
+  --default-3d             with no profile, play in 3D with the default geometry (every
+                           shape alike), as the "3D by default" entry did before Smart 3D
+  --smart-3d               with no profile, play in Smart 3D (Zaxnes Plus): the shapes learned
+                           get settings of their own (zax-engine3d smart3d.rs)
   --no-shadows             render with the shadows off
   --group-draws            reorder the opaque tiles by draw state (the handheld setting)
   --shadow-map <texels>    side of the shadow map (default 4096, AMD-034)
@@ -221,6 +225,8 @@ pub struct Options {
     pub mesh: RenderAlgorithm,
     /// Whether shadows are on.
     pub shadows: bool,
+    /// With no profile: 0 plays flat (2D), 1 in the default 3D, 2 in Smart 3D.
+    pub no_profile_3d: u8,
     /// Whether the opaque tiles are reordered by draw state.
     pub group_draws: bool,
     /// Shadow map side asked for.
@@ -324,6 +330,7 @@ impl Options {
             distance: None,
             mesh: RenderAlgorithm::Greedy,
             shadows: true,
+            no_profile_3d: 0,
             group_draws: false,
             shadow_map_size: geometry::SHADOW_MAP_SIZE,
             // Q-087 point 1: the default follows the setting's own, so the two cannot diverge
@@ -364,6 +371,8 @@ impl Options {
         while let Some(argument) = rest.next() {
             match argument.as_str() {
                 "--no-shadows" => options.shadows = false,
+                "--default-3d" => options.no_profile_3d = 1,
+                "--smart-3d" => options.no_profile_3d = 2,
                 "--no-bend-2d" => options.bend_two_dimensional_mode = false,
                 "--no-nes-bg-color" => options.use_nes_background_color = false,
                 "--no-backdrop-lighting" => options.backdrop_lighting = false,
@@ -944,7 +953,9 @@ fn build_scenes(options: &Options) -> Result<Vec<SyntheticScene>, HarnessError> 
             );
         }
         let tiles = document.hash_state().map(|state| state.tiles.clone());
+        zax_engine3d::smart3d::set_enabled(options.no_profile_3d == 2);
         return Ok(vec![rom::capture(&RomRequest {
+            no_profile_3d: options.no_profile_3d > 0,
             rom,
             frames,
             profile: &document.profile,

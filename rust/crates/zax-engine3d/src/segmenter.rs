@@ -54,7 +54,12 @@ impl SegmentContext<'_> {
         // A tile box is at least 1 x 1 and at most the grid, 35 x 33 cells.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let mut pattern = EnginePattern::new(width as u16, height as u16, cells, permanent);
-        pattern.add_instance(PatternInstance::new());
+        let mut instance = PatternInstance::new();
+        // Zaxnes Plus: with no profile, Smart 3D gives the shape settings of its own.
+        if crate::smart3d::enabled() {
+            crate::smart3d::apply(crate::smart3d::classify(frame, shape), &mut instance);
+        }
+        pattern.add_instance(instance);
         let id = self.patterns.add(pattern, self.images);
         build_geometry(
             self.patterns,
@@ -88,6 +93,9 @@ impl Segmenter {
     ) {
         self.segment_background(frame, context, two_dimensional_mode);
         frame.set_background_shape_count();
+        if !two_dimensional_mode {
+            crate::smart3d::promote_status_bars(frame, context);
+        }
         self.segment_sprites(frame, context, two_dimensional_mode);
     }
 

@@ -115,6 +115,8 @@ pub struct HandheldUi {
     roms_directory: PathBuf,
     roms: RomListModel,
     library: Vec<ProfileChoice>,
+    /// A game a launcher sent, with the profile picked for it, started at the next update.
+    pending_launch: Option<(String, String)>,
     profiles: Option<ProfileListModel>,
     overlay: OverlayModel,
     options: HandheldOptionsModel,
@@ -228,6 +230,7 @@ impl HandheldUi {
             roms_directory,
             roms: RomListModel::default(),
             library: Vec::new(),
+            pending_launch: None,
             profiles: None,
             overlay: OverlayModel::new(),
             options: HandheldOptionsModel::new(),
@@ -458,6 +461,23 @@ impl HandheldUi {
                     .as_deref()
                     .map(|path| RomEntry::new(PathBuf::from(path)));
                 if let Some(entry) = entry {
+                    // Zaxnes Plus: a game a launcher started never stops on the chooser. It plays
+                    // with the profile that carries its name, or else in Smart 3D.
+                    if crate::launch_origin::from_frontend() {
+                        self.library = ProfileChooserModel::new(host.games().library())
+                            .all()
+                            .to_vec();
+                        let id = self
+                            .profile_of(host, &entry)
+                            .filter(|found| !found.two_dimensional)
+                            .map(|found| found.id)
+                            .or_else(|| host.games().default_three_dimensional_id())
+                            .or_else(|| host.games().two_dimensional_mode_id());
+                        if let Some(id) = id {
+                            self.pending_launch = Some((entry.path.to_string_lossy().into_owned(), id));
+                            return;
+                        }
+                    }
                     self.open_profiles(&entry);
                 }
             }
@@ -471,6 +491,9 @@ impl HandheldUi {
 
     /// One frame of input: the exit combination, the menu button and the presses of the screen.
     pub fn update(&mut self, pad: &PadState, seconds: f32, frame: &mut UiFrame<'_>) {
+        if let Some((rom, id)) = self.pending_launch.take() {
+            frame.host.launch_rom_with_profile(&rom, &id);
+        }
         self.confirming = frame.host.pending_confirmation().is_some();
         self.follow_the_game(frame.host);
         self.update_combo(pad, seconds, frame.host);
@@ -890,6 +913,8 @@ impl HandheldUi {
                     .find(|entry| entry.path == path)
                     .and_then(|entry| entry.profile.as_ref())
                     .map(|profile| profile.id.clone())
+                    // Zaxnes Plus: a game with no profile plays in Smart 3D ("3D by default").
+                    .or_else(|| host.games().default_three_dimensional_id())
                     .or_else(|| host.games().two_dimensional_mode_id());
                 let rom = path.to_string_lossy();
                 match profile {

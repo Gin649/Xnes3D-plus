@@ -19,6 +19,12 @@ RetroAchievements, save states, shaders and the console interface. For all of th
 
 ## What Zaxnes Plus adds
 
+- **Smart 3D for every game.** A game with no 3D profile plays in Smart 3D instead of flat 2D:
+  characters stand out from the scenery, solid ground and walls are thick, distant details and
+  backdrops sit further back, sprites the game draws behind the background go behind it, and the
+  status bar (score, lives, health) stays a flat, readable panel. It works from what the NES
+  itself tells the emulator, so it needs nothing per game. A 3D profile, when there is one, is
+  always used instead.
 - **Games open straight from a launcher.** A launcher or frontend can start a game with Android's
   usual "open this file" request, and Zaxnes Plus goes straight into it instead of opening on its
   ROM list. A game sent while Zaxnes Plus is already running opens there too.
@@ -116,6 +122,9 @@ The Zaxnes Plus changes are kept small so they could be offered back to Zaxnes:
 | `rust/crates/zax-app/src/ui/handheld/mod.rs` | quitting goes back to the launcher |
 | `rust/crates/zax-app/src/demo_game.rs` | builds without the demo game's files |
 | `.github/fork/` | the Zaxnes Plus name, icon and colours, applied when the APK is built |
+| `rust/crates/zax-engine3d/src/smart3d.rs`, `segmenter.rs` | Smart 3D |
+| `rust/crates/zax-app/src/emulation/host/jobs.rs`, `ui/handheld/mod.rs` | Smart 3D as the default for games without a profile |
+| `rust/crates/zax-harness/src/render/` | `--default-3d` and `--smart-3d` for the **Smart 3D preview** workflow |
 
 ## Licence and credits
 

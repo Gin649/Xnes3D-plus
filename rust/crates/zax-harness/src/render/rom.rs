@@ -39,6 +39,8 @@ use crate::HarnessError;
 
 /// What `render --rom` runs.
 pub struct RomRequest<'a> {
+    /// With no profile, segments in 3D (`--default-3d`, `--smart-3d`) instead of playing flat.
+    pub no_profile_3d: bool,
     /// The `.nes` file.
     pub rom: &'a Path,
     /// Emulated frames to run before the capture (at least one is run).
@@ -152,7 +154,7 @@ pub fn capture(request: &RomRequest<'_>) -> Result<SyntheticScene, HarnessError>
         battery: request.battery,
         profile,
         mesh: request.mesh,
-        force_three_dimensional: false,
+        force_three_dimensional: request.no_profile_3d,
         advanced: request.advanced,
         delay_mesh: request.delay_mesh,
         tiles: request.tiles.clone(),

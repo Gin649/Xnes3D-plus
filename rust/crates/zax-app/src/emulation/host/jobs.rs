@@ -161,12 +161,24 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         }
         // A profile that has since been removed falls back to the chooser rather than to an
         // error, which is also what REQ-UI-201 describes for a file never started.
+        // A launcher's game whose remembered choice is "3D by default" (Smart 3D, given when it
+        // had no profile) is matched again, so a profile added since is used (Zaxnes Plus).
+        let automatic = self.games.default_three_dimensional_id();
         let chosen = self
             .settings_store
             .as_ref()
             .and_then(|store| store.games().profile_for(rom_path).map(str::to_owned))
-            .filter(|target| self.games.exists(target));
-        let target = chosen.or_else(|| self.games.game_for_rom(rom_path));
+            .filter(|target| self.games.exists(target))
+            .filter(|target| {
+                !(crate::launch_origin::from_frontend() && automatic.as_deref() == Some(target.as_str()))
+            });
+        let target = chosen.or_else(|| {
+            self.games
+                .game_for_rom(rom_path)
+                .filter(|target| {
+                    !(crate::launch_origin::from_frontend() && automatic.as_deref() == Some(target.as_str()))
+                })
+        });
         match target {
             Some(game_id) => self.launch_rom_with_profile(rom_path, &game_id),
             None => self.request_ui(Command::ChooseProfile, &CommandArgs::of_text(rom_path)),
@@ -411,6 +423,8 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         // in the cache and then in the ROM **before** its patterns are built, so that the first
         // converted frame already has them. Nothing happens for a 3dn profile.
         let game = &self.prepare_hash_tiles(game, rom_image);
+        // Zaxnes Plus: a game with no profile ("3D by default") plays in Smart 3D.
+        zax_engine3d::smart3d::set_enabled(game.is_default_three_dimensional);
         let request = SessionRequest {
             profile: &game.profile,
             title: &game.title,

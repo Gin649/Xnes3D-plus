@@ -1,0 +1,85 @@
+name: Smart 3D preview
+
+# Renders the same moments of a game three ways, flat (2D), the default 3D (every shape alike)
+# and Smart 3D, side by side, to see and tune Smart 3D (zax-engine3d smart3d.rs) without a device.
+# The game is FlappyZaxNes, built from its GPL source in the repository, so no commercial ROM is
+# ever used here. The pictures are in the run's artifacts.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools (cc65 for the game, SDL2 and Mesa for the offscreen render, ImageMagick)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cc65 libsdl2-dev xvfb libgl1-mesa-dri libegl1 imagemagick > /dev/null
+
+      - name: Rust
+        working-directory: rust
+        run: rustup show
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: harness-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Build FlappyZaxNes from its source
+        run: |
+          make -C rust/crates/zax-app/demo/source
+          cp rust/crates/zax-app/demo/source/FlappyZaxNes.nes "$RUNNER_TEMP/game.nes"
+          cd rust/crates/zax-app/demo
+          [ -f FlappyZaxNes.nes ] || : > FlappyZaxNes.nes
+          [ -f flappyzaxnes.3dn ] || : > flappyzaxnes.3dn
+
+      - name: Build the harness
+        working-directory: rust
+        env:
+          # quicker than the shipped release profile; the pictures are the same
+          CARGO_PROFILE_RELEASE_LTO: 'false'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+        run: cargo build --release -p zax-harness
+
+      - name: Render flat, default 3D and Smart 3D
+        working-directory: rust
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          SDL_AUDIODRIVER: dummy
+        run: |
+          # Start on the title screen, then flap every 20 frames.
+          press="120:start,180:start"
+          for f in $(seq 240 20 1600); do press="$press,$f:a"; done
+          out="$RUNNER_TEMP/preview"
+          mkdir -p "$out"
+          for frames in 400 900 1500; do
+            for angle in 0.81,0.81 0.35,-0.55; do
+              for mode in flat default-3d smart-3d; do
+                flag=""; [ "$mode" != flat ] && flag="--$mode"
+                dir="$out/raw/$frames-$angle-$mode"
+                mkdir -p "$dir"
+                xvfb-run -a ./target/release/zax-harness render --out "$dir" --rom "$RUNNER_TEMP/game.nes" \
+                  --run "$frames" --press "$press" --angles "$angle" $flag > "$dir/log.txt" 2>&1 || { cat "$dir/log.txt"; exit 1; }
+              done
+              pictures=""
+              for mode in flat default-3d smart-3d; do
+                pictures="$pictures -label $mode $(ls "$out/raw/$frames-$angle-$mode"/*.png | head -1)"
+              done
+              montage $pictures -tile 3x1 -geometry +6+6 -pointsize 18 "$out/frame$frames-angle$angle.png"
+            done
+          done
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart3d-preview
+          path: ${{ runner.temp }}/preview/*.png

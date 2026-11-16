@@ -54,6 +54,7 @@ fn smb3_picture(folder: &str, frames: u32) -> Option<(Vec<u8>, usize)> {
     let script = InputScript::parse(PRESS).unwrap();
     let profile = profile::load(None, None).unwrap();
     let scene = rom::capture(&RomRequest {
+        no_profile_3d: false,
         rom: &path,
         frames,
         profile: &profile,
