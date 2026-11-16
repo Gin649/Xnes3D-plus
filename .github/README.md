@@ -29,6 +29,8 @@ RetroAchievements, save states, shaders and the console interface. For all of th
   Zaxnes Plus has a second icon, **Zaxnes Plus profiles**. Pick a folder with it once (for example on
   your SD card) and every new or changed `.3dn` profile in it is copied in each time Zaxnes Plus
   starts. You can also open or share a `.3dn` file with Zaxnes Plus profiles from a file manager.
+- **3dSen profiles without a PC.** Put 3dSen's profile bundle file in your profiles folder and
+  Zaxnes Plus converts every profile in it at the next start (see [3D profiles](#3d-profiles)).
 - **Installs beside the official Zaxnes.** Zaxnes Plus has its own app ID
   (`io.github.gin649.zaxnes`), so both can be installed at once. Each build installs over the last
   one and keeps your profiles, saves and settings.
@@ -62,14 +64,21 @@ app's cache under its own file name, so battery saves and save states stay with 
 
 ## 3D profiles
 
-Zaxnes doesn't come with 3dSen's profiles: you import them from your own copy of
-[3dSen](https://store.steampowered.com/app/1147940).
+Zaxnes doesn't come with 3dSen's profiles: you bring them from your own copy of
+[3dSen](https://store.steampowered.com/app/1147940). 3dSen keeps them all packed in one file, and
+Zaxnes Plus can convert that file itself:
 
-1. On a PC, install 3dSen from Steam and the Windows version of
-   [Zaxnes](https://github.com/nixxou/zaxnes/releases), then use **File ▸ Import from 3dSen…**.
-   The profiles go to `%LOCALAPPDATA%\Zaxnes\profiles`.
-2. Copy the `.3dn` files to the folder you picked in **Zaxnes Plus profiles** on your device. They
-   are copied in the next time Zaxnes Plus starts.
+1. In Steam, right-click 3dSen ▸ **Manage ▸ Browse local files**. In the folder ending in `_Data`,
+   open `StreamingAssets/aa/StandaloneWindows64/` and copy the file named
+   `defaultprofiles_assets_all_….bundle`.
+2. Put it in the folder you picked in **Zaxnes Plus profiles** on your device (or open or share it
+   with Zaxnes Plus profiles from a file manager).
+3. Start Zaxnes Plus. It converts every profile in the bundle into your profiles; this can take a
+   moment, once. It only converts again if you put in a different bundle (after a 3dSen update).
+
+The same conversion is **File ▸ Import from 3dSen…** in the desktop Zaxnes, which works too:
+its profiles go to `%LOCALAPPDATA%\Zaxnes\profiles`, and `.3dn` files you copy to your folder
+are copied in at the next start.
 
 Free community profiles are shared in the
 [Profile Repository](https://itch.io/board/872690/profile-repository) of the 3dSen Maker forum;
@@ -92,7 +101,7 @@ The Zaxnes Plus changes are kept small so they could be offered back to Zaxnes:
 | `rust/build/android/java/.../ZaxnesActivity.java` | passes a sent game on as `--rom`, and games sent while running |
 | `rust/build/android/java/.../LaunchedRom.java` | turns the sent ROM into a file the emulator can open |
 | `rust/build/android/java/.../ProfileFolder.java`, `ProfilesActivity.java` | the profiles folder |
-| `rust/crates/zax-android/src/lib.rs` | hands the activity's arguments to Zaxnes |
+| `rust/crates/zax-android/src/lib.rs` | hands the activity's arguments to Zaxnes, and converts a waiting 3dSen bundle |
 | `rust/crates/zax-app/src/launch_origin.rs` | remembers that a launcher started the game |
 | `rust/crates/zax-app/src/application.rs` | opens a game sent while running |
 | `rust/crates/zax-app/src/ui/handheld/mod.rs` | quitting goes back to the launcher |

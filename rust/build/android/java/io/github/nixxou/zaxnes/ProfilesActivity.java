@@ -33,7 +33,7 @@ public class ProfilesActivity extends Activity {
         // written out in full: the APK's Java is compiled without lambdas (no LambdaMetafactory in android.jar)
         new AlertDialog.Builder(this)
             .setTitle("3D profiles")
-            .setMessage(where + "\n\nNew and changed .3dn profiles in this folder (and its subfolders) are copied into Zaxnes each time it starts.")
+            .setMessage(where + "\n\nNew and changed .3dn profiles in this folder (and its subfolders) are copied into Zaxnes each time it starts. Put 3dSen's defaultprofiles_assets_all_....bundle file here too, and Zaxnes converts all its profiles at the next start.")
             .setPositiveButton(tree == null ? "Choose folder" : "Change folder", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface d, int w) {
@@ -134,7 +134,8 @@ public class ProfilesActivity extends Activity {
 
     private void toast(int copied) {
         String text = copied == 0 ? "No new profiles to copy."
-            : copied == 1 ? "1 profile copied into Zaxnes." : copied + " profiles copied into Zaxnes.";
+            : copied == 1 ? "1 file copied into Zaxnes." : copied + " files copied into Zaxnes.";
+        if (ProfileFolder.bundleWaiting(this)) text += " Your 3dSen profiles are converted the next time Zaxnes starts.";
         Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 }
