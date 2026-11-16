@@ -983,6 +983,7 @@ impl Running {
             return;
         }
         log(&format!("opening '{rom}', sent while running."));
+        crate::launch_origin::set_from_frontend();
         self.host.enqueue(Command::OpenRom, CommandArgs::of_text(rom));
     }
 
@@ -2417,6 +2418,7 @@ fn start_game_from_command_line(
         log("no --rom given; the window opens on the ROM list of the console mode (F1: the welcome screen).");
         return;
     };
+    crate::launch_origin::set_from_frontend();
     let full: PathBuf = std::path::absolute(rom).unwrap_or_else(|_| PathBuf::from(rom));
     let full = full.to_string_lossy().into_owned();
     if let Some(movie) = options.movie_path.as_deref() {

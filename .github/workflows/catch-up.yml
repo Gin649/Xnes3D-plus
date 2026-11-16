@@ -1,0 +1,48 @@
+name: Catch up with Zaxnes
+
+# Once a week, brings in what is new in the official Zaxnes (nixxou/zaxnes) and builds a new
+# Zaxnes Plus from it. If an update clashes with the Zaxnes Plus changes, nothing is merged and
+# this run fails, saying so, for the clash to be sorted out by hand.
+on:
+  schedule:
+    - cron: '23 9 * * 1' # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  catch-up:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge the official Zaxnes
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/nixxou/zaxnes.git
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with the official Zaxnes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git merge --no-edit -m "Catch up with the official Zaxnes" upstream/main; then
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "::error::The official Zaxnes changed the same lines as Zaxnes Plus; nothing was merged. Ask Claude to bring it in by hand."
+            exit 1
+          fi
+
+      - name: Build the new Zaxnes Plus
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android-apk.yml --ref main

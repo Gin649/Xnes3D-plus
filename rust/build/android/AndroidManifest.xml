@@ -49,5 +49,27 @@
                 <data android:mimeType="application/x-nes-rom" />
             </intent-filter>
         </activity>
+
+        <!-- Zaxnes profiles: picks the folder 3D profiles are copied from, and takes .3dn files
+             opened or shared from a file manager (ProfilesActivity, ProfileFolder). -->
+        <activity
+            android:name="io.github.nixxou.zaxnes.ProfilesActivity"
+            android:label="Zaxnes profiles"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <!-- .3dn has no type of its own: file managers send it as "unknown file" -->
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

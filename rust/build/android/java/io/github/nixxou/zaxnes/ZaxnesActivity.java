@@ -53,6 +53,25 @@ public class ZaxnesActivity extends SDLActivity {
         part.renameTo(new File(root, LAUNCH_REQUEST)); // whole, so it is never read half-written
     }
 
+    /**
+     * Quitting closes the activity once Zaxnes' main has returned; the process goes too, so the
+     * next game a frontend sends starts in a fresh one (the native side can't start twice in a
+     * process). Battery saves are written when the game stops, before this.
+     */
+    @Override
+    protected void onDestroy() {
+        boolean leaving = isFinishing();
+        super.onDestroy();
+        if (leaving) System.exit(0);
+    }
+
+    /** Copies the profiles from the folder picked in Zaxnes Plus profiles (see ProfilesActivity). */
+    @Override
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        ProfileFolder.importAll(this);
+        super.onCreate(savedInstanceState);
+    }
+
     /** Must match LAUNCH_REQUEST_FILE in zax-app's application.rs. */
     private static final String LAUNCH_REQUEST = "launch-request.txt";
 

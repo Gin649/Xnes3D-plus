@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # to publish the APK as a release
 
 jobs:
   apk:
@@ -48,7 +48,8 @@ jobs:
       - name: The fork's own app id and name (Zaxnes Plus), so it sits beside the official Zaxnes
         run: |
           sed -i -e 's/package="io.github.nixxou.zaxnes"/package="io.github.gin649.zaxnes"/' \
-                 -e 's/android:label="Zaxnes"/android:label="Zaxnes Plus"/g' rust/build/android/AndroidManifest.xml
+                 -e 's/android:label="Zaxnes"/android:label="Zaxnes Plus"/g' \
+                 -e 's/android:label="Zaxnes profiles"/android:label="Zaxnes Plus profiles"/g' rust/build/android/AndroidManifest.xml
           grep -n 'package=\|android:label' rust/build/android/AndroidManifest.xml
 
       - name: Stand-ins for the demo game's files
@@ -58,6 +59,13 @@ jobs:
           cd rust/crates/zax-app/demo
           [ -f FlappyZaxNes.nes ] || : > FlappyZaxNes.nes
           [ -f flappyzaxnes.3dn ] || : > flappyzaxnes.3dn
+
+      - name: The 3D profiles made for Zaxnes (nixxou/zaxnes_3dn, CC BY-NC-ND 4.0)
+        # build.rs puts the .3dn files of this folder in the app, which copies them into the
+        # profiles at the first start, as the official builds do.
+        run: |
+          git clone --depth 1 https://github.com/nixxou/zaxnes_3dn "$RUNNER_TEMP/zaxnes_3dn"
+          echo "ZAXNES_3DN_DIR=$RUNNER_TEMP/zaxnes_3dn" >> "$GITHUB_ENV"
 
       - name: Build the APK
         working-directory: rust
@@ -70,3 +78,15 @@ jobs:
         with:
           name: Zaxnes-android-fork
           path: rust/target-android/package/*.apk
+
+      - name: Publish it as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep -m1 '^version = ' rust/Cargo.toml | cut -d'"' -f2)
+          tag="v${version}-plus.${{ github.run_number }}"
+          apk=$(ls rust/target-android/package/*.apk | head -1)
+          cp "$apk" "ZaxnesPlus-${version}-plus.${{ github.run_number }}-android-arm64.apk"
+          gh release create "$tag" "ZaxnesPlus-${version}-plus.${{ github.run_number }}-android-arm64.apk" \
+            --target "${{ github.sha }}" --title "Zaxnes Plus ${version} (build ${{ github.run_number }})" \
+            --notes "Zaxnes ${version} with the Zaxnes Plus changes: games open straight from a launcher, quitting a game started that way goes back to it, and a profiles folder (Zaxnes Plus profiles). Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0."
