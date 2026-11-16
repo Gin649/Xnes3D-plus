@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../branding/zaxnes-logo.svg" alt="Zaxnes" width="420">
+  <img src="zaxnes-plus-logo.svg" alt="Zaxnes Plus" width="460">
 </p>
 
 # Zaxnes Plus
