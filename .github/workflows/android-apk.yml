@@ -51,6 +51,14 @@ jobs:
                  -e 's/android:label="Zaxnes"/android:label="Zaxnes Plus"/g' rust/build/android/AndroidManifest.xml
           grep -n 'package=\|android:label' rust/build/android/AndroidManifest.xml
 
+      - name: Stand-ins for the demo game's files
+        # FlappyZaxNes and its 3D profile are built apart and kept out of the repository; empty
+        # files let the app build, and an empty demo is simply not installed (demo_game.rs).
+        run: |
+          cd rust/crates/zax-app/demo
+          [ -f FlappyZaxNes.nes ] || : > FlappyZaxNes.nes
+          [ -f flappyzaxnes.3dn ] || : > flappyzaxnes.3dn
+
       - name: Build the APK
         working-directory: rust
         env:

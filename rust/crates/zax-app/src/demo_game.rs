@@ -40,6 +40,11 @@ pub fn version() -> String {
 ///
 /// A folder or a file that cannot be written.
 pub fn install(paths: &UserDataPaths, roms: &Path) -> io::Result<Option<PathBuf>> {
+    // A build made without the demo's files (they are built apart and not in the repository)
+    // carries empty stand-ins: then there is no demo game to install.
+    if ROM.is_empty() || PROFILE.is_empty() {
+        return Ok(None);
+    }
     let marker = paths.root.join(MARKER_NAME);
     let version = version();
     if !paths.is_writable || fs::read_to_string(&marker).is_ok_and(|text| text.trim() == version) {
