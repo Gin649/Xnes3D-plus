@@ -10,44 +10,187 @@ import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.widget.Toast;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The "Zaxnes profiles" icon: picks the folder 3D profiles are copied from (ProfileFolder) and
- * copies them now. It also takes .3dn files opened or shared from a file manager.
+ * The "Zaxnes profiles" screen (its own icon): imports 3dSen's profiles from the bundle file of a
+ * 3dSen installation, picked anywhere on the device; picks the folder .3dn profiles are copied
+ * from (ProfileFolder); and takes .3dn and .bundle files opened or shared from a file manager.
+ *
+ * <p>The Java here is compiled without lambdas (no LambdaMetafactory in android.jar), so the
+ * listeners are written out in full.
  */
 public class ProfilesActivity extends Activity {
     private static final int PICK_FOLDER = 1;
+    private static final int PICK_BUNDLE = 2;
+
+    /**
+     * zax-android: converts the 3dSen bundle file at {@code bundle} into .3dn profiles in the
+     * folder {@code profiles}, as File > Import from 3dSen does. Returns "ok" or "failed" on the
+     * first line, then the importer's report.
+     */
+    private native String nativeImport3dSen(String bundle, String profiles);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        if (importFiles(getIntent())) return;
+        if (handleSharedFiles(getIntent())) return;
         showMenu();
     }
 
     private void showMenu() {
-        Uri tree = ProfileFolder.get(this);
-        String where = tree == null ? "No folder picked yet." : "Folder: " + folderName(tree);
-        // written out in full: the APK's Java is compiled without lambdas (no LambdaMetafactory in android.jar)
+        final Uri tree = ProfileFolder.get(this);
+        String[] items = {
+            "Import 3dSen profiles…",
+            tree == null ? "Choose a profiles folder…" : "Profiles folder: " + folderName(tree) + " (change)",
+            "Copy from the profiles folder now",
+            "Close",
+        };
         new AlertDialog.Builder(this)
-            .setTitle("3D profiles")
-            .setMessage(where + "\n\nNew and changed .3dn profiles in this folder (and its subfolders) are copied into Zaxnes each time it starts. Put 3dSen's defaultprofiles_assets_all_....bundle file here too, and Zaxnes converts all its profiles at the next start.")
-            .setPositiveButton(tree == null ? "Choose folder" : "Change folder", new DialogInterface.OnClickListener() {
+            .setTitle("Zaxnes 3D profiles")
+            .setItems(items, new DialogInterface.OnClickListener() {
                 @Override
-                public void onClick(DialogInterface d, int w) {
-                    pickFolder();
+                public void onClick(DialogInterface d, int which) {
+                    switch (which) {
+                        case 0: pickBundle(); break;
+                        case 1: pickFolder(); break;
+                        case 2:
+                            if (tree == null) {
+                                Toast.makeText(ProfilesActivity.this, "Choose a profiles folder first.", Toast.LENGTH_LONG).show();
+                                showMenu();
+                            } else {
+                                toast(ProfileFolder.importAll(ProfilesActivity.this));
+                                finish();
+                            }
+                            break;
+                        default: finish();
+                    }
                 }
             })
-            .setNeutralButton("Copy now", new DialogInterface.OnClickListener() {
+            .setOnCancelListener(new DialogInterface.OnCancelListener() {
                 @Override
-                public void onClick(DialogInterface d, int w) {
-                    toast(ProfileFolder.importAll(ProfilesActivity.this));
+                public void onCancel(DialogInterface d) {
                     finish();
                 }
             })
-            .setNegativeButton("Close", new DialogInterface.OnClickListener() {
+            .show();
+    }
+
+    // ---- 3dSen bundle -----------------------------------------------------------------------
+
+    private void pickBundle() {
+        new AlertDialog.Builder(this)
+            .setTitle("Import 3dSen profiles")
+            .setMessage("Choose the bundle file from your 3dSen installation. On your PC, in Steam: "
+                + "3dSen › Manage › Browse local files, then the folder ending in _Data › "
+                + "StreamingAssets › aa › StandaloneWindows64 › "
+                + "defaultprofiles_assets_all_….bundle. Copy it to this device first.")
+            .setPositiveButton("Choose file", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType("*/*");
+                    try {
+                        startActivityForResult(i, PICK_BUNDLE);
+                    } catch (Exception e) {
+                        Toast.makeText(ProfilesActivity.this, "No file picker on this device.", Toast.LENGTH_LONG).show();
+                        finish();
+                    }
+                }
+            })
+            .setNegativeButton("Back", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    showMenu();
+                }
+            })
+            .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                @Override
+                public void onCancel(DialogInterface d) {
+                    finish();
+                }
+            })
+            .show();
+    }
+
+    /** Copies the bundle into the cache, converts it on a background thread, then reports. */
+    private void convertBundle(final Uri uri, String name) {
+        if (!ProfileFolder.isBundle(name)) {
+            showResult("That isn't a 3dSen bundle", "Choose the file whose name starts with "
+                + "defaultprofiles_assets_all_ and ends in .bundle.");
+            return;
+        }
+        final File copy = new File(new File(getCacheDir(), "import-3dsen"), ProfileFolder.safe(name));
+        final File profiles = ProfileFolder.target(this);
+        if (profiles == null) {
+            showResult("Import failed", "Zaxnes' storage isn't available right now.");
+            return;
+        }
+        final AlertDialog working = new AlertDialog.Builder(this)
+            .setTitle("Converting 3dSen profiles…")
+            .setMessage("This can take a moment.")
+            .setCancelable(false)
+            .show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String report;
+                try {
+                    copy.getParentFile().mkdirs();
+                    if (!ProfileFolder.copy(getContentResolver(), uri, copy)) {
+                        report = "failed\nThe bundle file couldn't be read.";
+                    } else {
+                        System.loadLibrary("c++_shared");
+                        System.loadLibrary("SDL2");
+                        System.loadLibrary("main");
+                        report = nativeImport3dSen(copy.getAbsolutePath(), profiles.getAbsolutePath());
+                    }
+                } catch (Throwable t) {
+                    report = "failed\n" + t.getMessage();
+                } finally {
+                    copy.delete();
+                }
+                final String done = report == null ? "failed\nNo answer from the converter." : report;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        working.dismiss();
+                        boolean ok = done.startsWith("ok");
+                        showResult(ok ? "3dSen profiles imported" : "Import finished with problems", readable(done));
+                    }
+                });
+            }
+        }).start();
+    }
+
+    /** The importer's report without its first line and the folder paths. */
+    private static String readable(String report) {
+        StringBuilder out = new StringBuilder();
+        String[] lines = report.split("\n");
+        int shown = 0;
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (line.isEmpty() || line.startsWith("3dSen:")) continue;
+            if (shown == 12) {
+                out.append("…");
+                break;
+            }
+            out.append(line).append('\n');
+            shown++;
+        }
+        String text = out.toString().trim();
+        return (text.isEmpty() ? "Done." : text)
+            + "\n\nThe profiles are used the next time a game starts in Zaxnes.";
+    }
+
+    private void showResult(String title, String message) {
+        new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface d, int w) {
                     finish();
@@ -61,6 +204,8 @@ public class ProfilesActivity extends Activity {
             })
             .show();
     }
+
+    // ---- profiles folder --------------------------------------------------------------------
 
     private void pickFolder() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -76,21 +221,30 @@ public class ProfilesActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_FOLDER) return;
-        if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-            Uri tree = data.getData();
+        Uri picked = resultCode == RESULT_OK && data != null ? data.getData() : null;
+        if (picked == null) {
+            finish();
+            return;
+        }
+        if (requestCode == PICK_BUNDLE) {
+            convertBundle(picked, name(picked));
+        } else if (requestCode == PICK_FOLDER) {
             try {
-                getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                getContentResolver().takePersistableUriPermission(picked, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             } catch (Exception ignored) {
             }
-            ProfileFolder.set(this, tree);
+            ProfileFolder.set(this, picked);
             toast(ProfileFolder.importAll(this));
+            finish();
+        } else {
+            finish();
         }
-        finish();
     }
 
-    /** .3dn files opened or shared with Zaxnes: copied in, then this closes. */
-    private boolean importFiles(Intent intent) {
+    // ---- files opened or shared from a file manager -----------------------------------------
+
+    /** .3dn files are copied in; a .bundle is converted. True when there was something. */
+    private boolean handleSharedFiles(Intent intent) {
         if (intent == null) return false;
         List<Uri> uris = new ArrayList<>();
         String action = intent.getAction();
@@ -104,6 +258,13 @@ public class ProfilesActivity extends Activity {
             if (list != null) uris.addAll(list);
         }
         if (uris.isEmpty()) return false;
+        for (Uri u : uris) {
+            String n = name(u);
+            if (ProfileFolder.isBundle(n)) {
+                convertBundle(u, n);
+                return true;
+            }
+        }
         int copied = 0;
         for (Uri u : uris) if (ProfileFolder.importOne(this, u, name(u))) copied++;
         toast(copied);
@@ -134,8 +295,7 @@ public class ProfilesActivity extends Activity {
 
     private void toast(int copied) {
         String text = copied == 0 ? "No new profiles to copy."
-            : copied == 1 ? "1 file copied into Zaxnes." : copied + " files copied into Zaxnes.";
-        if (ProfileFolder.bundleWaiting(this)) text += " Your 3dSen profiles are converted the next time Zaxnes starts.";
+            : copied == 1 ? "1 profile copied into Zaxnes." : copied + " profiles copied into Zaxnes.";
         Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 }

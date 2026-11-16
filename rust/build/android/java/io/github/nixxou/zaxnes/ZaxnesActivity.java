@@ -70,10 +70,6 @@ public class ZaxnesActivity extends SDLActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         ProfileFolder.importAll(this);
         super.onCreate(savedInstanceState);
-        if (ProfileFolder.bundleWaiting(this)) {
-            android.widget.Toast.makeText(this, "Converting your 3dSen profiles. This can take a moment.",
-                android.widget.Toast.LENGTH_LONG).show();
-        }
     }
 
     /** Must match LAUNCH_REQUEST_FILE in zax-app's application.rs. */
