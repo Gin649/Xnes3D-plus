@@ -141,7 +141,8 @@ pub const fn page_rows(page: OptionsPage) -> &'static [OptionRow] {
         OptionsPage::NesPicture
         | OptionsPage::Camera
         | OptionsPage::Audio
-        | OptionsPage::Shaders => &[],
+        | OptionsPage::Shaders
+        | OptionsPage::Library => &[],
     }
 }
 
@@ -203,6 +204,7 @@ pub const fn row_settings(row: OptionRow) -> &'static [SettingId] {
         | OptionRow::Shader(_)
         | OptionRow::ShaderPreFilter(_)
         | OptionRow::ShaderBackend
+        | OptionRow::Android(_)
         | OptionRow::Group(_) => &[],
     }
 }

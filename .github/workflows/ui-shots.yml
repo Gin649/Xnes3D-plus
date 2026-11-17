@@ -1,0 +1,74 @@
+name: UI preview
+
+# Zaxnes Plus: pictures of the console interface (the one Android uses) as the APK will show it,
+# with the fork's colours, font and rows, so a change can be looked at before an APK is built.
+# Builds the desktop program on Linux (a debug build: it only draws menus), runs it in its
+# handheld mode with --ui-shots under a virtual display, and publishes the pictures as the
+# "ui-preview" pre-release. It also shows that the fork's Rust compiles.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to publish the pictures as a release
+
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Libraries (SDL2, a software OpenGL, a virtual display)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libsdl2-dev xvfb libgl1-mesa-dri libegl1 libgles2 libdbus-1-dev pkg-config cmake
+
+      - name: Rust (the version in rust-toolchain.toml)
+        working-directory: rust
+        run: rustup show
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ui-shots-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Zaxnes Plus branding and the interface font
+        run: |
+          python3 .github/fork/branding.py
+          curl -fsSL -o "$RUNNER_TEMP/PixelifySans.ttf" \
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/pixelifysans/PixelifySans%5Bwght%5D.ttf"
+
+      - name: Stand-ins for the demo game's files
+        run: |
+          cd rust/crates/zax-app/demo
+          [ -f FlappyZaxNes.nes ] || : > FlappyZaxNes.nes
+          [ -f flappyzaxnes.3dn ] || : > flappyzaxnes.3dn
+
+      - name: Build
+        working-directory: rust
+        run: cargo build -p zax-app --bin zaxnes
+
+      - name: Pictures of the interface
+        working-directory: rust
+        env:
+          ZAXNES_PLUS_ANDROID_ROWS: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          SDL_AUDIODRIVER: dummy
+        run: |
+          mkdir -p "$RUNNER_TEMP/user"
+          xvfb-run -a -s "-screen 0 1280x720x24" ./target/debug/zaxnes --handheld --size 1280x720 \
+            --userdata "$RUNNER_TEMP/user" --font "$RUNNER_TEMP/PixelifySans.ttf" \
+            --ui-shots "$RUNNER_TEMP/shots"
+          ls -la "$RUNNER_TEMP/shots"
+
+      - name: Publish them as the ui-preview pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ui-preview --yes --cleanup-tag 2>/dev/null || true
+          gh release create ui-preview "$RUNNER_TEMP"/shots/*.png --prerelease \
+            --target "${{ github.sha }}" --title "Zaxnes Plus interface preview" \
+            --notes "Pictures of the console interface at ${{ github.sha }}, made by the UI preview workflow."

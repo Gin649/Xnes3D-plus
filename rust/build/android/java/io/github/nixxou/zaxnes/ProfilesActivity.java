@@ -1,31 +1,58 @@
 package io.github.nixxou.zaxnes;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The "Zaxnes profiles" screen (its own icon): imports 3dSen's profiles from the bundle file of a
- * 3dSen installation, picked anywhere on the device; gets the community profiles listed in
- * community/profiles.json (CommunityProfiles); picks the folder .3dn profiles are copied from
- * (ProfileFolder); and takes .3dn and .bundle files opened or shared from a file manager.
+ * The Android half of the rows of Options > Games and 3D profiles. Zaxnes Plus has one icon: its
+ * own menus send a message (zax-app's android_bridge.rs), ZaxnesActivity opens this screen with
+ * the action asked, and this screen runs the picker or the download, then closes. It also takes
+ * .3dn and .bundle files opened or shared from a file manager.
+ *
+ * <p>What it finds goes back to the running app through the user data folder: the ROM folder as
+ * a path in roms-folder.txt, profiles into profile-inbox, which the app imports from on its own.
  *
  * <p>The Java here is compiled without lambdas (no LambdaMetafactory in android.jar), so the
  * listeners are written out in full.
  */
 public class ProfilesActivity extends Activity {
+    /** The extra ZaxnesActivity passes: the number of the action (AndroidAction in Rust). */
+    static final String EXTRA_ACTION = "action";
+    static final int ACTION_ROM_FOLDER = 1;
+    static final int ACTION_IMPORT_3DSEN = 2;
+    static final int ACTION_COMMUNITY = 3;
+    static final int ACTION_PROFILES_FOLDER = 4;
+    static final int ACTION_COPY_PROFILES = 5;
+
+    /** Must match ROMS_FOLDER_FILE in zax-app's android_bridge.rs. */
+    static final String ROMS_FOLDER_FILE = "roms-folder.txt";
+
     private static final int PICK_FOLDER = 1;
     private static final int PICK_BUNDLE = 2;
+    private static final int PICK_ROM_FOLDER = 3;
+    private static final int ASK_STORAGE = 4;
+
+    /** Waiting for the player to come back from the "All files access" settings page. */
+    private boolean waitingForAllFiles;
 
     /**
      * zax-android: converts the 3dSen bundle file at {@code bundle} into .3dn profiles in the
@@ -37,59 +64,154 @@ public class ProfilesActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) return; // a picker is already open
         if (handleSharedFiles(getIntent())) return;
-        showMenu();
+        switch (getIntent().getIntExtra(EXTRA_ACTION, 0)) {
+            case ACTION_ROM_FOLDER: chooseRomFolder(); break;
+            case ACTION_IMPORT_3DSEN: pickBundle(); break;
+            case ACTION_COMMUNITY: getCommunityProfiles(); break;
+            case ACTION_PROFILES_FOLDER: pickFolder(); break;
+            case ACTION_COPY_PROFILES: copyNow(); break;
+            default: finish();
+        }
     }
 
-    private void showMenu() {
-        final Uri tree = ProfileFolder.get(this);
-        String[] items = {
-            "Import 3dSen profiles…",
-            "Get community profiles",
-            tree == null ? "Choose a profiles folder…" : "Profiles folder: " + folderName(tree) + " (change)",
-            "Copy from the profiles folder now",
-            "Close",
-        };
-        new AlertDialog.Builder(this)
-            .setTitle("Zaxnes 3D profiles")
-            .setItems(items, new DialogInterface.OnClickListener() {
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (waitingForAllFiles) {
+            waitingForAllFiles = false;
+            if (canReadStorage()) {
+                openRomFolderPicker();
+            } else {
+                showResult("No access to your files",
+                    "Without \"All files access\", Zaxnes Plus can't read your ROM folder. "
+                        + "You can try again from Options > Games and 3D profiles.");
+            }
+        }
+    }
+
+    private AlertDialog.Builder dialog() {
+        return new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+    }
+
+    private File inbox() {
+        File to = ProfileFolder.inbox(this);
+        if (to != null) to.mkdirs();
+        return to;
+    }
+
+    // ---- ROM folder -------------------------------------------------------------------------
+
+    /** Whether the app may read any folder of the shared storage. */
+    private boolean canReadStorage() {
+        if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void chooseRomFolder() {
+        if (canReadStorage()) {
+            openRomFolderPicker();
+            return;
+        }
+        if (Build.VERSION.SDK_INT < 30) {
+            requestPermissions(new String[] { Manifest.permission.READ_EXTERNAL_STORAGE }, ASK_STORAGE);
+            return;
+        }
+        dialog()
+            .setTitle("Allow access to your games")
+            .setMessage("To list the games in your own ROM folder, without copying them anywhere, "
+                + "Zaxnes Plus needs \"All files access\". It only reads the folder you choose next.\n\n"
+                + "Turn it on for Zaxnes Plus on the next screen, then come back.")
+            .setPositiveButton("Continue", new DialogInterface.OnClickListener() {
                 @Override
-                public void onClick(DialogInterface d, int which) {
-                    switch (which) {
-                        case 0: pickBundle(); break;
-                        case 1: getCommunityProfiles(); break;
-                        case 2: pickFolder(); break;
-                        case 3:
-                            if (tree == null) {
-                                Toast.makeText(ProfilesActivity.this, "Choose a profiles folder first.", Toast.LENGTH_LONG).show();
-                                showMenu();
-                            } else {
-                                toast(ProfileFolder.importAll(ProfilesActivity.this));
-                                finish();
-                            }
-                            break;
-                        default: finish();
+                public void onClick(DialogInterface d, int w) {
+                    waitingForAllFiles = true;
+                    try {
+                        startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:" + getPackageName())));
+                    } catch (Exception e) {
+                        try {
+                            startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                        } catch (Exception again) {
+                            waitingForAllFiles = false;
+                            showResult("Can't open the setting", "Allow \"All files access\" for Zaxnes Plus "
+                                + "in Android's settings (Apps > Zaxnes Plus), then try again.");
+                        }
                     }
                 }
             })
-            .setOnCancelListener(new DialogInterface.OnCancelListener() {
-                @Override
-                public void onCancel(DialogInterface d) {
-                    finish();
-                }
-            })
+            .setNegativeButton("Cancel", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
             .show();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != ASK_STORAGE) return;
+        if (canReadStorage()) {
+            openRomFolderPicker();
+        } else {
+            showResult("No access to your files", "Without it, Zaxnes Plus can't read your ROM folder.");
+        }
+    }
+
+    private void openRomFolderPicker() {
+        Toast.makeText(this, "Choose the folder your NES games are in.", Toast.LENGTH_LONG).show();
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        try {
+            startActivityForResult(i, PICK_ROM_FOLDER);
+        } catch (Exception e) {
+            showResult("No folder picker", "This device has no folder picker.");
+        }
+    }
+
+    /**
+     * The real path of a folder picked in Android's folder picker: "primary:ROMs/nes" is
+     * /storage/emulated/0/ROMs/nes, "1234-5678:nes" is /storage/1234-5678/nes (an SD card).
+     */
+    static String pathOf(Uri tree) {
+        String id;
+        try {
+            id = DocumentsContract.getTreeDocumentId(tree);
+        } catch (Exception e) {
+            return null;
+        }
+        if (id == null) return null;
+        if (id.startsWith("raw:")) return id.substring(4);
+        int colon = id.indexOf(':');
+        if (colon < 0) return null;
+        String volume = id.substring(0, colon);
+        String path = id.substring(colon + 1);
+        String root = "primary".equalsIgnoreCase(volume)
+            ? Environment.getExternalStorageDirectory().getPath()
+            : "/storage/" + volume;
+        return path.isEmpty() ? root : root + "/" + path;
+    }
+
+    /** Tells the running app its new ROM folder (it checks for the file twice a second). */
+    private boolean sendRomFolder(String path) {
+        File root = getExternalFilesDir(null);
+        if (root == null) return false;
+        File part = new File(root, ROMS_FOLDER_FILE + ".part");
+        try (FileOutputStream out = new FileOutputStream(part)) {
+            out.write(path.getBytes("UTF-8"));
+        } catch (Exception e) {
+            return false;
+        }
+        return part.renameTo(new File(root, ROMS_FOLDER_FILE));
     }
 
     // ---- 3dSen bundle -----------------------------------------------------------------------
 
     private void pickBundle() {
-        new AlertDialog.Builder(this)
+        dialog()
             .setTitle("Import 3dSen profiles")
             .setMessage("Choose the bundle file from your 3dSen installation. On your PC, in Steam: "
-                + "3dSen › Manage › Browse local files, then the folder ending in _Data › "
-                + "StreamingAssets › aa › StandaloneWindows64 › "
-                + "defaultprofiles_assets_all_….bundle. Copy it to this device first.")
+                + "3dSen > Manage > Browse local files, then the folder ending in _Data > "
+                + "StreamingAssets > aa > StandaloneWindows64 > "
+                + "defaultprofiles_assets_all_....bundle. Copy it to this device first.")
             .setPositiveButton("Choose file", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface d, int w) {
@@ -99,23 +221,12 @@ public class ProfilesActivity extends Activity {
                     try {
                         startActivityForResult(i, PICK_BUNDLE);
                     } catch (Exception e) {
-                        Toast.makeText(ProfilesActivity.this, "No file picker on this device.", Toast.LENGTH_LONG).show();
-                        finish();
+                        showResult("No file picker", "This device has no file picker.");
                     }
                 }
             })
-            .setNegativeButton("Back", new DialogInterface.OnClickListener() {
-                @Override
-                public void onClick(DialogInterface d, int w) {
-                    showMenu();
-                }
-            })
-            .setOnCancelListener(new DialogInterface.OnCancelListener() {
-                @Override
-                public void onCancel(DialogInterface d) {
-                    finish();
-                }
-            })
+            .setNegativeButton("Cancel", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
             .show();
     }
 
@@ -127,13 +238,13 @@ public class ProfilesActivity extends Activity {
             return;
         }
         final File copy = new File(new File(getCacheDir(), "import-3dsen"), ProfileFolder.safe(name));
-        final File profiles = ProfileFolder.target(this);
+        final File profiles = inbox();
         if (profiles == null) {
-            showResult("Import failed", "Zaxnes' storage isn't available right now.");
+            showResult("Import failed", "Zaxnes Plus' storage isn't available right now.");
             return;
         }
-        final AlertDialog working = new AlertDialog.Builder(this)
-            .setTitle("Converting 3dSen profiles…")
+        final AlertDialog working = dialog()
+            .setTitle("Converting 3dSen profiles...")
             .setMessage("This can take a moment.")
             .setCancelable(false)
             .show();
@@ -178,48 +289,33 @@ public class ProfilesActivity extends Activity {
             String line = lines[i].trim();
             if (line.isEmpty() || line.startsWith("3dSen:")) continue;
             if (shown == 12) {
-                out.append("…");
+                out.append("...");
                 break;
             }
             out.append(line).append('\n');
             shown++;
         }
         String text = out.toString().trim();
-        return (text.isEmpty() ? "Done." : text)
-            + "\n\nThe profiles are used the next time a game starts in Zaxnes.";
-    }
-
-    private void showResult(String title, String message) {
-        new AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("OK", new DialogInterface.OnClickListener() {
-                @Override
-                public void onClick(DialogInterface d, int w) {
-                    finish();
-                }
-            })
-            .setOnCancelListener(new DialogInterface.OnCancelListener() {
-                @Override
-                public void onCancel(DialogInterface d) {
-                    finish();
-                }
-            })
-            .show();
+        return (text.isEmpty() ? "Done." : text) + "\n\nYour game list shows them in a moment.";
     }
 
     // ---- community profiles -----------------------------------------------------------------
 
     private void getCommunityProfiles() {
-        final AlertDialog working = new AlertDialog.Builder(this)
-            .setTitle("Getting community profiles…")
+        final File profiles = inbox();
+        if (profiles == null) {
+            showResult("Couldn't get community profiles", "Zaxnes Plus' storage isn't available right now.");
+            return;
+        }
+        final AlertDialog working = dialog()
+            .setTitle("Getting community profiles...")
             .setMessage("Each one is downloaded from its creator's own link.")
             .setCancelable(false)
             .show();
         new Thread(new Runnable() {
             @Override
             public void run() {
-                final CommunityProfiles.Result r = CommunityProfiles.fetchAll(ProfilesActivity.this);
+                final CommunityProfiles.Result r = CommunityProfiles.fetchAll(ProfilesActivity.this, profiles);
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -235,7 +331,6 @@ public class ProfilesActivity extends Activity {
                             if (r.addedCount > 0) text.append("New or updated, thanks to their makers:\n").append(r.added).append('\n');
                             if (r.upToDate > 0) text.append(r.upToDate).append(r.upToDate == 1 ? " profile was" : " profiles were").append(" already up to date.\n");
                             if (r.failed.length() > 0) text.append("\nCouldn't be downloaded (try again later):\n").append(r.failed);
-                            text.append("\nThey are used the next time a game starts in Zaxnes.");
                         }
                         showResult(r.addedCount > 0 ? r.addedCount + " community profiles added" : "Community profiles", text.toString().trim());
                     }
@@ -247,14 +342,36 @@ public class ProfilesActivity extends Activity {
     // ---- profiles folder --------------------------------------------------------------------
 
     private void pickFolder() {
-        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        try {
-            startActivityForResult(i, PICK_FOLDER);
-        } catch (Exception e) {
-            Toast.makeText(this, "No folder picker on this device.", Toast.LENGTH_LONG).show();
-            finish();
+        Uri tree = ProfileFolder.get(this);
+        String now = tree == null ? "No folder chosen yet." : "Now: " + folderName(tree) + ".";
+        dialog()
+            .setTitle("Profiles folder")
+            .setMessage("Choose a folder of .3dn profiles, say on your SD card. Zaxnes Plus copies new "
+                + "and changed profiles from it each time it starts.\n\n" + now)
+            .setPositiveButton("Choose folder", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    try {
+                        startActivityForResult(i, PICK_FOLDER);
+                    } catch (Exception e) {
+                        showResult("No folder picker", "This device has no folder picker.");
+                    }
+                }
+            })
+            .setNegativeButton("Cancel", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
+            .show();
+    }
+
+    private void copyNow() {
+        if (ProfileFolder.get(this) == null) {
+            pickFolder();
+            return;
         }
+        toast(ProfileFolder.importAll(this, inbox()));
+        finish();
     }
 
     @Override
@@ -273,8 +390,18 @@ public class ProfilesActivity extends Activity {
             } catch (Exception ignored) {
             }
             ProfileFolder.set(this, picked);
-            toast(ProfileFolder.importAll(this));
+            toast(ProfileFolder.importAll(this, inbox()));
             finish();
+        } else if (requestCode == PICK_ROM_FOLDER) {
+            String path = pathOf(picked);
+            if (path == null || !new File(path).isDirectory()) {
+                showResult("That folder can't be used", "Choose a folder on the internal storage or an SD card.");
+            } else if (!sendRomFolder(path)) {
+                showResult("ROM folder not saved", "Zaxnes Plus' storage isn't available right now.");
+            } else {
+                Toast.makeText(this, "ROM folder: " + folderName(picked), Toast.LENGTH_LONG).show();
+                finish();
+            }
         } else {
             finish();
         }
@@ -304,11 +431,41 @@ public class ProfilesActivity extends Activity {
                 return true;
             }
         }
+        File to = inbox();
         int copied = 0;
-        for (Uri u : uris) if (ProfileFolder.importOne(this, u, name(u))) copied++;
+        if (to != null) for (Uri u : uris) if (ProfileFolder.importOne(this, u, name(u), to)) copied++;
         toast(copied);
         finish();
         return true;
+    }
+
+    // ---- small helpers ----------------------------------------------------------------------
+
+    private void showResult(String title, String message) {
+        dialog()
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
+            .show();
+    }
+
+    private DialogInterface.OnClickListener finishOnClick() {
+        return new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface d, int w) {
+                finish();
+            }
+        };
+    }
+
+    private DialogInterface.OnCancelListener finishOnCancel() {
+        return new DialogInterface.OnCancelListener() {
+            @Override
+            public void onCancel(DialogInterface d) {
+                finish();
+            }
+        };
     }
 
     private String name(Uri uri) {
@@ -334,7 +491,14 @@ public class ProfilesActivity extends Activity {
 
     private void toast(int copied) {
         String text = copied == 0 ? "No new profiles to copy."
-            : copied == 1 ? "1 profile copied into Zaxnes." : copied + " profiles copied into Zaxnes.";
+            : copied == 1 ? "1 profile added to Zaxnes Plus." : copied + " profiles added to Zaxnes Plus.";
         Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+    }
+
+    /** Opens this screen for {@code action} (one of the ACTION_ numbers). */
+    static void open(Context c, int action) {
+        Intent i = new Intent(c, ProfilesActivity.class);
+        i.putExtra(EXTRA_ACTION, action);
+        c.startActivity(i);
     }
 }

@@ -15,6 +15,9 @@
     <!-- RetroAchievements. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Zaxnes Plus: the game list reads the player's own ROM folder, wherever it is. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
     <application
         android:label="Zaxnes"
@@ -38,32 +41,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-            <!-- A frontend starting a game: the data is the ROM (see LaunchedRom). -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="application/zip" />
-                <data android:mimeType="application/x-nes-rom" />
-            </intent-filter>
+            <!-- Zaxnes Plus: no "open this file" filter, so Zaxnes Plus stays out of Android's
+                 "Open with" list for zips and other files. A launcher starts a game by naming
+                 this activity, which needs no filter: the ROM still comes as the intent's data
+                 (see LaunchedRom). -->
         </activity>
 
-        <!-- Zaxnes profiles: picks the folder 3D profiles are copied from, and takes .3dn files
-             opened or shared from a file manager (ProfilesActivity, ProfileFolder). -->
+        <!-- Zaxnes Plus: the Android half of Options > Games and 3D profiles (pickers,
+             downloads), opened by the emulator itself, so it has no icon of its own; it also
+             takes .3dn files opened or shared from a file manager (ProfilesActivity). -->
         <activity
             android:name="io.github.nixxou.zaxnes.ProfilesActivity"
             android:label="Zaxnes profiles"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true"
             android:exported="true">
+            <!-- Share only (the share sheet, not "Open with"): .3dn and .bundle files. -->
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />

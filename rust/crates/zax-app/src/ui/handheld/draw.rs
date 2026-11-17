@@ -41,6 +41,15 @@ const BAR: [f32; 4] = [0.1, 0.1, 0.16, 1.0];
 const WARNING: [f32; 4] = [1.0, 0.45, 0.35, 1.0];
 /// The [W] of a game whose ROM was not studied yet: its profile or its name says a hack.
 const UNSTUDIED: [f32; 4] = [0.42, 0.44, 0.5, 1.0];
+/// Zaxnes Plus: the NES look. The red of the stripe under the title, and of the A and B button
+/// badges of the hints; the grey of the other buttons; the line between rows.
+const NES_RED: [f32; 4] = [0.85, 0.09, 0.15, 1.0];
+const NES_BUTTON_GREY: [f32; 4] = [0.36, 0.36, 0.38, 1.0];
+const ON_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const ROW_LINE: [f32; 4] = [1.0, 1.0, 1.0, 0.07];
+/// The logo in the title band of the game list: the name, then "PLUS" in red.
+const LOGO_NAME: &str = "ZAXNES";
+const LOGO_PLUS: &str = " PLUS";
 /// What marks a favourite game in the home list (AMD-053 REQ-UI-210; the form is free).
 const FAVORITE_MARKER: &str = "*";
 /// A value a game has of its own, and the hint of the list when the game has some.
@@ -129,9 +138,26 @@ impl Painter<'_> {
             .add_rect([0.0, 0.0], [self.size[0], metrics.title_band()], BAR)
             .filled(true)
             .build();
+        // Zaxnes Plus: a red stripe under the band, as on the console's front.
+        let stripe = (metrics.padding * 0.3).max(2.0);
+        self.list
+            .add_rect(
+                [0.0, metrics.title_band() - stripe],
+                [self.size[0], metrics.title_band()],
+                NES_RED,
+            )
+            .filled(true)
+            .build();
         {
             let _heading = self.heading.map(|font| self.ui.push_font(font));
-            self.text(metrics.padding, metrics.padding, FOCUS, title);
+            if title == text::PRODUCT_NAME {
+                // The game list carries the logo: the name, then "PLUS" in red.
+                self.text(metrics.padding, metrics.padding, TEXT, LOGO_NAME);
+                let x = metrics.padding + self.ui.calc_text_size(LOGO_NAME)[0];
+                self.text(x, metrics.padding, NES_RED, LOGO_PLUS);
+            } else {
+                self.text(metrics.padding, metrics.padding, FOCUS, title);
+            }
         }
         if !right.is_empty() {
             let x = self.size[0] - metrics.padding - self.width(right);
@@ -192,10 +218,18 @@ impl Painter<'_> {
         let top = self.row_top(slot);
         let x0 = metrics.padding * 0.5;
         if selected {
+            // Square corners: the pixel look of the fork.
             self.list
                 .add_rect([x0, top], [x1, top + metrics.row], focus)
                 .filled(true)
-                .rounding(metrics.padding * 0.4)
+                .build();
+        } else {
+            self.list
+                .add_line(
+                    [x0 + metrics.padding, top + metrics.row - 1.0],
+                    [x1 - metrics.padding, top + metrics.row - 1.0],
+                    ROW_LINE,
+                )
                 .build();
         }
         let y = top + (metrics.row - metrics.font) * 0.5;
@@ -320,8 +354,10 @@ impl Painter<'_> {
             if let Some((_, progress)) = self.hold_ring.filter(|(label, _)| label == button) {
                 self.ring(x, y, button, progress);
             }
-            self.text(x, y, FOCUS, button);
-            x += self.width(button) + metrics.padding * 0.5;
+            // Zaxnes Plus: the button as a badge, round for a face button, red for A and B as
+            // on the NES pad, grey for the others.
+            let badge = self.button_badge(x, y, button);
+            x += badge + metrics.padding * 0.5;
             self.text(x, y, *colour, meaning);
             x += self.width(meaning) + metrics.padding * 1.6;
             if let Some(action) = pointer::hint_action(button) {
@@ -338,6 +374,28 @@ impl Painter<'_> {
                 );
             }
         }
+    }
+
+    /// Zaxnes Plus: `button` drawn as a badge whose left edge is at `x` and whose text sits on
+    /// the line `y`. Returns its width.
+    fn button_badge(&self, x: f32, y: f32, button: &str) -> f32 {
+        let metrics = &self.metrics;
+        let text_width = self.width(button);
+        let height = metrics.font + metrics.padding * 0.4;
+        let width = (text_width + metrics.padding * 0.8).max(height);
+        let top = y - metrics.padding * 0.2;
+        let colour = if matches!(button, "A" | "B") {
+            NES_RED
+        } else {
+            NES_BUTTON_GREY
+        };
+        self.list
+            .add_rect([x, top], [x + width, top + height], colour)
+            .filled(true)
+            .rounding(height * 0.5)
+            .build();
+        self.text(x + (width - text_width) * 0.5, y, ON_BUTTON, button);
+        width
     }
 
     /// A ring round the label `button` drawn at `x`, `y`, filled clockwise from the top to
@@ -559,8 +617,15 @@ impl HandheldUi {
         painter.title(text::PRODUCT_NAME, &position);
         if total == 0 {
             let folder = self.roms_directory.display().to_string();
-            let message = strings::format(&strings::get(keys::HANDHELD_ROMS_EMPTY), &[&folder]);
-            painter.message(&message, WARNING);
+            // Zaxnes Plus: on Android the folder is chosen, not copied to.
+            let message = if crate::android_bridge::available() {
+                "No games here yet.\n\nPress A to choose the folder your NES games are in. \
+                 You can change it later in Options > Games and 3D profiles."
+                    .to_owned()
+            } else {
+                strings::format(&strings::get(keys::HANDHELD_ROMS_EMPTY), &[&folder])
+            };
+            painter.message(&message, TEXT);
         }
         let rows = self.metrics.visible_rows(painter.size[1]);
         let first = first_visible(self.roms.selected(), rows, total);
@@ -650,6 +715,13 @@ impl HandheldUi {
         // R2 the game's achievements, while RetroAchievements is on (owner request).
         if frame.host.achievements.is_enabled() && self.roms.selected_entry().is_some() {
             hints.push(("R2", strings::get(keys::TAB_ACHIEVEMENTS), TEXT));
+        }
+        // Zaxnes Plus: with no game listed, A picks the folder (Android).
+        if total == 0 && crate::android_bridge::available() {
+            hints = vec![
+                ("A", "Choose ROM folder".to_owned(), TEXT),
+                ("Y", strings::get(keys::HANDHELD_HINT_OPTIONS), TEXT),
+            ];
         }
         painter.hint_entries(&hints);
     }
@@ -888,6 +960,8 @@ impl HandheldUi {
                 options::OptionRow::Overscan | options::OptionRow::Achievements => {
                     format!("{value} >")
                 }
+                // Zaxnes Plus: opened with A, nothing to step.
+                options::OptionRow::Android(_) => format!("{value} >"),
                 _ => format!("< {value} >"),
             };
             // The setting is kept, so the row still steps; what it says is that this game runs
@@ -1349,10 +1423,13 @@ fn home_row_label(entry: &RomEntry) -> String {
 }
 
 /// The tag at the right of a game: its 3D profile, or "2D" when it has none.
+///
+/// Zaxnes Plus: a game with no profile plays in Smart 3D, and says so.
 fn profile_tag(entry: &RomEntry) -> (String, [f32; 4]) {
     match &entry.profile {
         Some(profile) if !profile.two_dimensional => (profile.title.clone(), PROFILE),
-        _ => (strings::get(keys::HANDHELD_TAG_2D), DIM),
+        Some(_) => (strings::get(keys::HANDHELD_TAG_2D), DIM),
+        None => ("Smart 3D".to_owned(), DIM),
     }
 }
 

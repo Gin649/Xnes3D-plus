@@ -42,8 +42,12 @@ final class CommunityProfiles {
     }
 
     static Result fetchAll(Context c) {
+        return fetchAll(c, ProfileFolder.target(c));
+    }
+
+    /** The same, saving the profiles in {@code profiles}. */
+    static Result fetchAll(Context c, File profiles) {
         Result result = new Result();
-        File profiles = ProfileFolder.target(c);
         if (profiles == null) {
             result.error = "Zaxnes' storage isn't available right now.";
             return result;

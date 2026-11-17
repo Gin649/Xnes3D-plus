@@ -3,6 +3,7 @@
 //! zax-app: the application loop of Zaxnes (port of `Zax.App`, without the user interface).
 
 pub mod achievements;
+pub mod android_bridge;
 pub mod app_log;
 pub mod app_options;
 pub mod application;

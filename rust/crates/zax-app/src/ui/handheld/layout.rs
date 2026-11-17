@@ -36,7 +36,8 @@ impl Metrics {
         Self {
             font,
             heading: (font * 1.25).round(),
-            row: (font * 1.75).round().max(MINIMUM_ROW),
+            // Zaxnes Plus: taller rows, easier to read and to tap.
+            row: (font * 2.0).round().max(MINIMUM_ROW),
             padding: (font * 0.6).round(),
             hint_lines: 1,
         }

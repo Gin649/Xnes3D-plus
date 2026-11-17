@@ -501,6 +501,7 @@ impl Running {
         self.follow_the_editor_setting();
         self.load_the_asked_state();
         self.take_launch_request();
+        self.take_android_answers();
         let frame_begin = self.clock.start();
         let busy_begin = Instant::now();
         let mark = self.clock.start();
@@ -985,6 +986,58 @@ impl Running {
         log(&format!("opening '{rom}', sent while running."));
         crate::launch_origin::set_from_frontend();
         self.host.enqueue(Command::OpenRom, CommandArgs::of_text(rom));
+    }
+
+    /// Zaxnes Plus: what the Android side answered to a row of the menus (see
+    /// [`crate::android_bridge`]): a new ROM folder, or new profiles to import. Checked about
+    /// twice a second, like the launch request.
+    fn take_android_answers(&mut self) {
+        if self.state.rendered_frames % 30 != 15 {
+            return;
+        }
+        let Some(root) = self.options.user_data_root.as_deref() else {
+            return;
+        };
+        let root = Path::new(root);
+        let file = root.join(crate::android_bridge::ROMS_FOLDER_FILE);
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            let _ = std::fs::remove_file(&file);
+            let folder = text.trim().to_owned();
+            if !folder.is_empty() {
+                log(&format!("ROM folder chosen: '{folder}'."));
+                // The interface follows the setting (`ImguiFrontend::follow_roms_folder`).
+                self.host.update_settings(|settings| {
+                    settings.set(SettingId::UiRomsFolder, SettingValue::Text(folder));
+                });
+            }
+        }
+        let inbox = root.join(crate::android_bridge::PROFILE_INBOX);
+        let Ok(entries) = std::fs::read_dir(&inbox) else {
+            return;
+        };
+        let mut imported = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_profile = path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("3dn"));
+            if is_profile {
+                let result = self.host.games_mut().import_profile(&path);
+                log(&format!(
+                    "profile '{}' imported: {:?}.",
+                    path.display(),
+                    result.outcome
+                ));
+                imported += 1;
+            }
+            // Half-written files end in .part and are left for the next check.
+            if is_profile || !path.to_string_lossy().ends_with(".part") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        if imported > 0 {
+            self.ui.refresh_roms(&self.host);
+        }
     }
 
     fn load_the_asked_state(&mut self) {

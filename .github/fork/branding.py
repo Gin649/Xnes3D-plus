@@ -4,7 +4,8 @@ they are in the repository and the weekly catch-up merges cleanly.
 - the app id and names: io.github.gin649.zaxnes, "Zaxnes Plus", "Zaxnes Plus profiles"
 - the launcher icon (.github/fork/res, the voxel plus of the logo), compiled by the workflow and
   linked by build/package-android.py through ZAXNES_EXTRA_RES
-- the colours of the handheld interface (the one Android uses): teal and mint, as the logo
+- the colours of the handheld interface (the one Android uses): the NES look, charcoal, black
+  and the console's red
 
 Each change checks that the text it replaces is there; if Zaxnes changes it, the build stops
 here, saying which, instead of quietly building without the branding.
@@ -39,17 +40,21 @@ replace(script, "run([tool(tools, 'aapt2'), 'link', '-o', linked,",
         "run([tool(tools, 'aapt2'), 'link', '-o', linked, "
         "*([os.environ['ZAXNES_EXTRA_RES']] if os.environ.get('ZAXNES_EXTRA_RES') else []),")
 
-# Handheld interface colours: navy and yellow become dark teal and mint. The colours that mean
-# something (a game with a profile, save and load, warnings) stay as they are.
+# Handheld interface colours: the NES look. A charcoal screen, black bands with the console's red
+# stripe (drawn by draw.rs), a red focus bar with white text. The colours that mean something (a
+# game with a profile, save and load, warnings) stay as they are.
 draw = RUST / 'crates' / 'zax-app' / 'src' / 'ui' / 'handheld' / 'draw.rs'
 palette = {
-    'BACKGROUND': '[0.02, 0.06, 0.05, 1.0]',
-    'PANEL': '[0.03, 0.10, 0.08, 0.96]',
-    'DIM': '[0.62, 0.78, 0.73, 1.0]',
-    'FOCUS': '[0.18, 0.83, 0.63, 1.0]',
-    'ON_FOCUS': '[0.02, 0.12, 0.09, 1.0]',
-    'BAR': '[0.05, 0.20, 0.16, 1.0]',
-    'GROUP_TITLE': '[0.45, 0.60, 0.56, 1.0]',
+    'BACKGROUND': '[0.11, 0.11, 0.12, 1.0]',
+    'PANEL': '[0.14, 0.14, 0.15, 0.97]',
+    'TEXT': '[0.93, 0.93, 0.91, 1.0]',
+    'DIM': '[0.68, 0.68, 0.68, 1.0]',
+    'FOCUS': '[0.85, 0.09, 0.15, 1.0]',
+    'ON_FOCUS': '[1.0, 1.0, 1.0, 1.0]',
+    'PROFILE_ON_FOCUS': '[1.0, 0.92, 0.72, 1.0]',
+    'GAME_OWN_ON_FOCUS': '[0.85, 1.0, 1.0, 1.0]',
+    'BAR': '[0.04, 0.04, 0.04, 1.0]',
+    'GROUP_TITLE': '[0.92, 0.38, 0.38, 1.0]',
 }
 text = draw.read_text(encoding='utf-8')
 for name, value in palette.items():

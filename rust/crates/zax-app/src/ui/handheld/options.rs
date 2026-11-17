@@ -8,6 +8,7 @@ use zax_settings::values::SettingValue;
 
 use super::overlay::CameraPreset;
 use super::pad::PadButton;
+use crate::android_bridge::AndroidAction;
 use crate::persistence::app_settings::{AppSettings as _, AppSettingsMut as _, TvRegionSetting};
 use crate::render_scaling::{DIRECT_METHOD, RENDER_TEXTURE_METHOD};
 use crate::ui::{keys, shader_panel, strings, text};
@@ -76,6 +77,8 @@ pub enum OptionRow {
     /// The graphics API of the shaders page: OpenGL draws none, Vulkan draws them (owner
     /// decision: the slang shaders are offered on Vulkan only). Applied at the next start.
     ShaderBackend,
+    /// Zaxnes Plus: a row the Android side carries out (a folder or file picker, a download).
+    Android(crate::android_bridge::AndroidAction),
     /// A row that climbs to another page of the tree (RO-3).
     Page(OptionsPage),
     /// A group title: a label and nothing else (RO-3). Up and down skip it, and it is drawn
@@ -121,11 +124,13 @@ pub enum OptionsPage {
     Audio,
     /// The slang shaders of the four slots (owner request, the desktop's Shaders window).
     Shaders,
+    /// Zaxnes Plus (Android): the ROM folder and the 3D profiles.
+    Library,
 }
 
 impl OptionsPage {
     /// Every page, for the tests that walk them all.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Optimizations,
         Self::Advanced,
         Self::Display,
@@ -138,6 +143,7 @@ impl OptionsPage {
         Self::Emulation,
         Self::Audio,
         Self::Shaders,
+        Self::Library,
     ];
 
     /// The key of the page's title.
@@ -156,6 +162,7 @@ impl OptionsPage {
             Self::Emulation => keys::TAB_EMULATION,
             Self::Audio => keys::TAB_AUDIO,
             Self::Shaders => "shaders.title",
+            Self::Library => LIBRARY_TITLE,
         }
     }
 
@@ -175,6 +182,7 @@ impl OptionsPage {
             Self::Emulation => &EMULATION_ROWS,
             Self::Audio => &AUDIO_ROWS,
             Self::Shaders => &SHADER_ROWS,
+            Self::Library => &LIBRARY_ROWS,
         }
     }
 
@@ -205,7 +213,14 @@ pub const ROWS: [OptionRow; 13] = [
 
 /// The rows of the main page where the touch pad is offered (Android): its row after the
 /// controls, which is where it was before RO-3.
-pub const TOUCH_ROWS: [OptionRow; 14] = [
+///
+/// Zaxnes Plus: the games and profiles page first, then RetroAchievements and the controls, the
+/// rows most players look for; the picture and performance rows after them.
+pub const TOUCH_ROWS: [OptionRow; 15] = [
+    OptionRow::Page(OptionsPage::Library),
+    OptionRow::Achievements,
+    OptionRow::Controls,
+    OptionRow::TouchPad,
     OptionRow::Language,
     OptionRow::Volume,
     OptionRow::RenderScale,
@@ -216,11 +231,55 @@ pub const TOUCH_ROWS: [OptionRow; 14] = [
     OptionRow::Page(OptionsPage::Shaders),
     OptionRow::Page(OptionsPage::Optimizations),
     OptionRow::Page(OptionsPage::Advanced),
-    OptionRow::Controls,
-    OptionRow::TouchPad,
-    OptionRow::Achievements,
     OptionRow::Profiler,
 ];
+
+/// Zaxnes Plus: the title of the games and profiles page (English only, like the rest of the
+/// fork's rows).
+pub const LIBRARY_TITLE: &str = "Games and 3D profiles";
+
+/// Zaxnes Plus: the rows of the games and profiles page, each carried out by Android.
+pub const LIBRARY_ROWS: [OptionRow; 7] = [
+    OptionRow::Group("Games"),
+    OptionRow::Android(AndroidAction::ChooseRomFolder),
+    OptionRow::Group("3D profiles"),
+    OptionRow::Android(AndroidAction::Import3dSen),
+    OptionRow::Android(AndroidAction::CommunityProfiles),
+    OptionRow::Android(AndroidAction::ProfilesFolder),
+    OptionRow::Android(AndroidAction::CopyProfiles),
+];
+
+/// Zaxnes Plus: the label of an Android row.
+fn android_label(action: AndroidAction) -> String {
+    match action {
+        AndroidAction::ChooseRomFolder => "ROM folder",
+        AndroidAction::Import3dSen => "Import 3dSen profiles",
+        AndroidAction::CommunityProfiles => "Get community profiles",
+        AndroidAction::ProfilesFolder => "Profiles folder",
+        AndroidAction::CopyProfiles => "Copy from the profiles folder now",
+    }
+    .to_owned()
+}
+
+/// Zaxnes Plus: what an Android row shows on its right. The ROM folder shows the name of the
+/// folder chosen; the others how they open.
+fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
+    match action {
+        AndroidAction::ChooseRomFolder => {
+            let folder = settings.get(SettingId::UiRomsFolder).as_text().trim().to_owned();
+            if folder.is_empty() {
+                "Choose...".to_owned()
+            } else {
+                std::path::Path::new(&folder)
+                    .file_name()
+                    .map_or(folder.clone(), |name| name.to_string_lossy().into_owned())
+            }
+        }
+        AndroidAction::Import3dSen | AndroidAction::ProfilesFolder => "Choose...".to_owned(),
+        AndroidAction::CommunityProfiles => "Download".to_owned(),
+        AndroidAction::CopyProfiles => "Copy".to_owned(),
+    }
+}
 
 /// The values of the touch pad row (`input.touch_pad`): no, yes, automatic.
 const TOUCH_PADS: [i32; 3] = [0, 1, 2];
@@ -447,6 +506,8 @@ pub enum OptionsCommand {
     OpenAchievements,
     /// Step the camera preset.
     StepCamera(i32),
+    /// Zaxnes Plus: ask Android for this.
+    Android(AndroidAction),
 }
 
 /// How deep the pages go (RO-3): main › *Advanced options* › *3D rendering* › *Enhanced effects*.
@@ -517,7 +578,8 @@ impl HandheldOptionsModel {
     /// The rows of the main page: the Android one where a touch screen is offered.
     #[must_use]
     pub fn main_rows() -> &'static [OptionRow] {
-        if zax_platform::input::touch::offered() {
+        // Zaxnes Plus: the Android rows come with the touch ones.
+        if zax_platform::input::touch::offered() || crate::android_bridge::available() {
             &TOUCH_ROWS
         } else {
             &ROWS
@@ -601,6 +663,7 @@ impl HandheldOptionsModel {
                 return match self.selected() {
                     OptionRow::Controls => Some(OptionsCommand::OpenControls),
                     OptionRow::Achievements => Some(OptionsCommand::OpenAchievements),
+                    OptionRow::Android(action) => Some(OptionsCommand::Android(action)),
                     _ => self.step(settings, 1),
                 };
             }
@@ -694,6 +757,8 @@ pub fn step_row(row: OptionRow, settings: &mut SettingsModel, step: i32) -> Opti
         OptionRow::Controls | OptionRow::Page(_) | OptionRow::Group(_) => {}
         OptionRow::Setting(id) => super::advanced::step(id, settings, step),
         OptionRow::Achievements => return Some(OptionsCommand::OpenAchievements),
+        // Left and right do nothing on these: only A opens a picker.
+        OptionRow::Android(_) => {}
         OptionRow::Shader(slot) => {
             let picks = shader_panel::slot_picks(slot);
             let next = cycled(&picks, &shader_panel::slot_pick(settings, slot), step).clone();
@@ -747,6 +812,8 @@ pub fn label(row: OptionRow) -> String {
         OptionRow::Setting(id) => super::advanced::label(id),
         OptionRow::Controls => strings::get(keys::HANDHELD_OPTION_CONTROLS),
         OptionRow::Achievements => strings::get(keys::TAB_ACHIEVEMENTS),
+        OptionRow::Android(action) => android_label(action),
+        OptionRow::Page(OptionsPage::Library) => LIBRARY_TITLE.to_owned(),
         OptionRow::Page(page) => strings::get(page.title_key()),
         OptionRow::Group(key) => strings::get(key),
         OptionRow::Shader(slot) => shader_panel::slot_label(slot),
@@ -807,6 +874,7 @@ pub fn value_text(row: OptionRow, settings: &SettingsModel, camera: CameraPreset
         OptionRow::Controls | OptionRow::Page(_) | OptionRow::Group(_) => String::new(),
         OptionRow::Setting(id) => super::advanced::value_text(id, settings),
         OptionRow::Achievements => switch(settings.get(SettingId::AchievementsEnabled).as_bool()),
+        OptionRow::Android(action) => android_value(action, settings),
         OptionRow::Shader(slot) => {
             shader_panel::pick_label(slot, &shader_panel::slot_pick(settings, slot))
         }

@@ -49,6 +49,11 @@ jobs:
       - name: Zaxnes Plus branding (app id, names, icon, colours)
         run: |
           python3 .github/fork/branding.py
+          # The interface font, Pixelify Sans (SIL Open Font License), packed as a raw resource
+          # (ZaxnesActivity.interfaceFont).
+          mkdir -p .github/fork/res/raw
+          curl -fsSL -o .github/fork/res/raw/pixelify_sans.ttf \
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/pixelifysans/PixelifySans%5Bwght%5D.ttf"
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" compile --dir .github/fork/res -o "$RUNNER_TEMP/fork-res.zip"
           echo "ZAXNES_EXTRA_RES=$RUNNER_TEMP/fork-res.zip" >> "$GITHUB_ENV"
           git diff --stat
@@ -90,4 +95,4 @@ jobs:
           cp "$apk" "ZaxnesPlus-${version}-plus.${{ github.run_number }}-android-arm64.apk"
           gh release create "$tag" "ZaxnesPlus-${version}-plus.${{ github.run_number }}-android-arm64.apk" \
             --target "${{ github.sha }}" --title "Zaxnes Plus ${version} (build ${{ github.run_number }})" \
-            --notes "Zaxnes ${version} with the Zaxnes Plus changes: games open straight from a launcher, quitting a game started that way goes back to it, and a profiles folder (Zaxnes Plus profiles). Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0."
+            --notes "Zaxnes ${version} with the Zaxnes Plus changes: an NES look, your own ROM folder, 3D profiles from the emulator's own menus (Options > Games and 3D profiles), Smart 3D for games without a profile, and games that open straight from a launcher. Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0. Interface font: Pixelify Sans (SIL Open Font License)."

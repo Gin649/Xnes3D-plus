@@ -828,6 +828,14 @@ impl HandheldUi {
             return;
         }
         match self.screen {
+            // Zaxnes Plus: with no game listed, A picks the ROM folder (Android).
+            Screen::Home
+                if button == PadButton::A
+                    && self.roms.entries().is_empty()
+                    && crate::android_bridge::available() =>
+            {
+                self.ask_android(crate::android_bridge::AndroidAction::ChooseRomFolder);
+            }
             Screen::Home => {
                 if let Some(command) = self.roms.handle(button) {
                     self.carry_out_home(command, frame.host);
@@ -1202,6 +1210,17 @@ impl HandheldUi {
                 let preset = self.overlay.step_camera(step);
                 apply_camera(preset, frame.host);
             }
+            OptionsCommand::Android(action) => self.ask_android(action),
+        }
+    }
+
+    /// Zaxnes Plus: hands `action` to the Android side, which answers through the user data
+    /// folder (see [`crate::android_bridge`]).
+    fn ask_android(&mut self, action: crate::android_bridge::AndroidAction) {
+        if !crate::android_bridge::ask(action) {
+            self.effects.push(UiEffect::Log(format!(
+                "{action:?} could not be asked of Android."
+            )));
         }
     }
 

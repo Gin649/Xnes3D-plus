@@ -47,10 +47,24 @@ final class ProfileFolder {
         return root == null ? null : new File(root, "profiles");
     }
 
+    /**
+     * Where profiles go while Zaxnes Plus runs: the native side checks this folder about twice a
+     * second, imports what is in it and empties it. Must match PROFILE_INBOX in zax-app's
+     * android_bridge.rs.
+     */
+    static File inbox(Context c) {
+        File root = c.getExternalFilesDir(null);
+        return root == null ? null : new File(root, "profile-inbox");
+    }
+
     /** Copies new and changed profiles from the picked folder; the number copied. */
     static int importAll(Context c) {
+        return importAll(c, target(c));
+    }
+
+    /** The same, into {@code to}. */
+    static int importAll(Context c, File to) {
         Uri tree = get(c);
-        File to = target(c);
         if (tree == null || to == null) return 0;
         to.mkdirs();
         try {
@@ -101,9 +115,8 @@ final class ProfileFolder {
         return name != null && name.toLowerCase(java.util.Locale.ROOT).endsWith(BUNDLE_EXTENSION);
     }
 
-    /** Copies one profile that was opened or shared with Zaxnes Plus. */
-    static boolean importOne(Context c, Uri uri, String name) {
-        File to = target(c);
+    /** Copies one profile that was opened or shared with Zaxnes Plus into {@code to}. */
+    static boolean importOne(Context c, Uri uri, String name, File to) {
         if (to == null || name == null || !name.toLowerCase(java.util.Locale.ROOT).endsWith(EXTENSION)) return false;
         to.mkdirs();
         return copy(c.getContentResolver(), uri, new File(to, safe(name)));

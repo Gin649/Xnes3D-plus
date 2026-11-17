@@ -330,6 +330,14 @@ impl ImguiFrontend {
         self.console = ConsoleMode { active, automatic };
     }
 
+    /// Zaxnes Plus: reads the ROM folder again and the profile of each game (new profiles were
+    /// imported).
+    pub fn refresh_roms(&mut self, host: &AppHost) {
+        if let Some(handheld) = &mut self.handheld {
+            handheld.refresh_roms(host);
+        }
+    }
+
     /// Gives the ROM list the ROM folder of the options when it changed.
     fn follow_roms_folder(&mut self, host: &AppHost) {
         let setting = roms_setting(host);

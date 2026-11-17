@@ -2,6 +2,7 @@
 //! audio device (port of `Zax.Platform`, over SDL2). Everything above it talks to abstractions
 //! so that a libretro frontend can replace this layer wholesale.
 
+pub mod android_message;
 pub mod audio;
 pub mod console;
 pub mod framebuffer;

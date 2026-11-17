@@ -64,6 +64,7 @@ fn page_name(page: OptionsPage) -> &'static str {
         OptionsPage::Emulation => "emulation",
         OptionsPage::Audio => "audio",
         OptionsPage::Shaders => "shaders",
+        OptionsPage::Library => "library",
     }
 }
 

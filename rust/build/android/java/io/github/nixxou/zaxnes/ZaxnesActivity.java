@@ -7,6 +7,9 @@ import org.libsdl.app.SDLActivity;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Zaxnes on Android: SDL's activity, which loads the libraries below and runs {@code SDL_main} of
@@ -28,8 +31,56 @@ public class ZaxnesActivity extends SDLActivity {
     @Override
     protected String[] getArguments() {
         new File(getExternalFilesDir(null), LAUNCH_REQUEST).delete(); // one left from a past run
+        List<String> args = new ArrayList<>();
+        String font = interfaceFont();
+        if (font != null) {
+            args.add("--font");
+            args.add(font);
+        }
         String rom = LaunchedRom.from(this, getIntent());
-        return rom != null ? new String[] { "--rom", rom } : new String[0];
+        if (rom != null) {
+            args.add("--rom");
+            args.add(rom);
+        }
+        return args.toArray(new String[0]);
+    }
+
+    /**
+     * Zaxnes Plus: the interface font, Pixelify Sans (SIL Open Font License), packed in the APK
+     * as a raw resource and copied out once, since the native side reads it from a file. Null
+     * when the APK has none: the native side then uses the system font.
+     */
+    private String interfaceFont() {
+        int id = getResources().getIdentifier("pixelify_sans", "raw", getPackageName());
+        if (id == 0) return null;
+        File out = new File(new File(getFilesDir(), "fonts"), "PixelifySans.ttf");
+        if (out.isFile() && out.length() > 0) return out.getAbsolutePath();
+        out.getParentFile().mkdirs();
+        File part = new File(out.getPath() + ".part");
+        try (InputStream in = getResources().openRawResource(id); FileOutputStream o = new FileOutputStream(part)) {
+            byte[] buffer = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buffer)) > 0) o.write(buffer, 0, n);
+        } catch (Exception e) {
+            part.delete();
+            return null;
+        }
+        return part.renameTo(out) ? out.getAbsolutePath() : null;
+    }
+
+    /**
+     * Zaxnes Plus: a row of the emulator's menus that needs Android (a picker, a download). The
+     * native side sends it with SDL_AndroidSendMessage (zax-app's android_bridge.rs); SDL hands
+     * the numbers from 0x8000 up to this method. The answer comes back through the user data
+     * folder, see ProfilesActivity.
+     */
+    @Override
+    protected boolean onUnhandledMessage(int command, Object param) {
+        if (command > 0x8000 && command <= 0x8000 + ProfilesActivity.ACTION_COPY_PROFILES) {
+            ProfilesActivity.open(this, command - 0x8000);
+            return true;
+        }
+        return super.onUnhandledMessage(command, param);
     }
 
     /**
