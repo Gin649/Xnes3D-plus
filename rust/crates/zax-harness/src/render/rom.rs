@@ -647,8 +647,6 @@ impl Host {
         records: &mut Vec<TileRecord>,
         scene: &mut SceneState,
     ) -> Result<(), HarnessError> {
-        // Xnes3D+: Smart 3D finds the main character by the D-pad of player 1.
-        zax_engine3d::smart3d::set_pad(input.to_le_bytes()[0]);
         // REQ-LOOP-065: the real frame and the frames in advance, then the displayed frame's
         // batch, then the real state back — the order of the application's own loop.
         self.core.run_frame_ahead(input, self.run_ahead);
