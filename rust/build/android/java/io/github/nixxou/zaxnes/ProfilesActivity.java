@@ -527,10 +527,31 @@ public class ProfilesActivity extends Activity {
         Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 
-    /** Opens this screen for {@code action} (one of the ACTION_ numbers). */
-    static void open(Context c, int action) {
-        Intent i = new Intent(c, ProfilesActivity.class);
+    /**
+     * Opens this screen for {@code action} (one of the ACTION_ numbers), on the same screen as
+     * {@code from}: on a two-screen device (AYN Thor) Android could otherwise put it, and the dim
+     * layer of its dialogs, on the other screen.
+     */
+    static void open(Activity from, int action) {
+        Intent i = new Intent(from, ProfilesActivity.class);
         i.putExtra(EXTRA_ACTION, action);
-        c.startActivity(i);
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
+                options.setLaunchDisplayId(from.getWindowManager().getDefaultDisplay().getDisplayId());
+                from.startActivity(i, options.toBundle());
+                return;
+            } catch (Exception ignored) {
+                // a display that refuses it: open it as before
+            }
+        }
+        from.startActivity(i);
+    }
+
+    /** Leaves no dim layer behind: the dialogs go with the screen, whichever way it closes. */
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     }
 }
