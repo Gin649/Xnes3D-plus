@@ -1,4 +1,93 @@
 {
   "about": "Community 3D profiles that Zaxnes Plus profiles > Get community profiles downloads. Each one is fetched from its creator's own link; nothing is hosted here. See community/README.md to add one.",
-  "profiles": []
+  "profiles": [
+    {
+      "game": "Princess Tomato in the Salad Kingdom",
+      "creator": "SSmotzer",
+      "page": "https://itch.io/t/6295422/princess-tomato-in-the-salad-kingdom",
+      "url": "https://www.dropbox.com/scl/fi/qh167faf7r6yftoyazx6w/Princess-Tomato-in-the-Salad-Kingdom-USA.3dn?rlkey=ebsjv8rvmvxc9ahfr8p8qmw12&st=i0f52bdr&dl=0",
+      "version": "1",
+      "file": "Princess Tomato in the Salad Kingdom (USA).3dn"
+    },
+    {
+      "game": "Ice Hockey",
+      "creator": "Tunnelrat319",
+      "page": "https://itch.io/t/3755892/ice-hockey",
+      "url": "https://www.dropbox.com/scl/fi/68jvd6zduevno64dc15tz/Ice-Hockey-U.3dn?rlkey=3gzya1t0n9vs7bqyo82ohibuu&dl=0",
+      "version": "1",
+      "file": "Ice Hockey (U).3dn"
+    },
+    {
+      "game": "Kaizo Mario Bros. 3",
+      "creator": "geod",
+      "page": "https://itch.io/t/5718217/kaizo-mario-bros-3",
+      "url": "https://www.dropbox.com/scl/fi/sb34c4k3zvfn6e47hzaav/Kaizo-Mario-Bros-3.3dn?rlkey=wdaudrwzoxc64dz1b82ht97x8&dl=0",
+      "version": "1",
+      "file": "Kaizo Mario Bros 3.3dn"
+    },
+    {
+      "game": "Tetris (hint shape off)",
+      "creator": "geod",
+      "page": "https://itch.io/t/5695445/tetris-nintendo-hint-shape-disabled",
+      "url": "https://www.dropbox.com/scl/fi/uk24t79259yz8m8qs8tcb/Tetris_Nintendo_WithoutHint.3dn?rlkey=9no40a9i9dj5y1jhz0xa2ghni&dl=0",
+      "version": "1",
+      "file": "Tetris_Nintendo_WithoutHint.3dn"
+    },
+    {
+      "game": "2048",
+      "creator": "Ness_and_Sonic",
+      "page": "https://itch.io/t/950403/2048",
+      "url": "https://www.dropbox.com/scl/fi/xh8qmhevuoxp8rgji8xe7/2048.3dn?rlkey=6wwat4kmxbbjr3ld7bjzeus60&st=wpku45ox&dl=0",
+      "version": "1",
+      "file": "2048.3dn"
+    },
+    {
+      "game": "Tennis",
+      "creator": "Tunnelrat319",
+      "page": "https://itch.io/t/3876674/tennis",
+      "url": "https://www.dropbox.com/scl/fi/upmjzyk8m65iix8ojsbfc/Tennis-E.3dn?rlkey=u5cxeje5zvaz5bu5myctz8e9n&st=k1n7c4rx&dl=0",
+      "version": "1",
+      "file": "Tennis (E) [!].3dn"
+    },
+    {
+      "game": "Micro Mages: Second Quest",
+      "creator": "geod",
+      "page": "https://itch.io/t/5516646/micro-mages-second-quest",
+      "url": "https://www.dropbox.com/scl/fi/i91yxzhw1znl0n75mtqe4/Micro-Mages-Second-Quest.3dn?rlkey=17e3m9vqvlo9qwzxhbxlsm1cc&st=3nusmklj&dl=0",
+      "version": "1",
+      "file": "Micro Mages Second Quest.3dn"
+    },
+    {
+      "game": "Nix: The Paradox Relic",
+      "creator": "JJXB",
+      "page": "https://itch.io/t/2948819/nix-the-paradox-relic",
+      "url": "https://drive.google.com/file/d/14Ez-HbA_PVQy0BiqhkKJR-ek8uOPp47j/view",
+      "version": "1",
+      "file": "NixParadoxRelic_V1_9.3dn"
+    },
+    {
+      "game": "Kid Icarus: Angel Land Story",
+      "creator": "Dr. Volt Alessandro Arcade",
+      "page": "https://itch.io/t/962673/kid-icarus-angel-land-story-complete",
+      "url": "https://www.dropbox.com/s/10e7f7h95rdehjj/Kid%20Icarus.3dn?dl=0",
+      "version": "1",
+      "file": "Kid Icarus.3dn"
+    },
+    {
+      "game": "The Chessmaster",
+      "creator": "JJXB",
+      "page": "https://itch.io/t/951161/chessmaster",
+      "url": "https://drive.google.com/file/d/1uYXc0KXdqeO8f7lkkrYDqBGydu19nCFd/view?usp=sharing",
+      "version": "1",
+      "file": "Chessmaster, The (U) (PRG0) [!].3dn"
+    },
+    {
+      "game": "Bugs Bunny Crazy Castle",
+      "creator": "JJXB",
+      "page": "https://itch.io/t/969510/bugs-bunny-crazy-castle",
+      "url": "https://drive.google.com/file/d/1Tmx0nNBF-jwd--R3GiQTWCdHQQW03rjY/view?usp=sharing",
+      "version": "1",
+      "file": "Bugs Bunny Crazy Castle, The (U) [!].3dn"
+    }
+  ]
 }
