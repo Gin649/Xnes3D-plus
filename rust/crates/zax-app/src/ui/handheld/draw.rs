@@ -50,6 +50,23 @@ const ROW_LINE: [f32; 4] = [1.0, 1.0, 1.0, 0.07];
 /// The logo in the title band of the game list: the name, then "PLUS" in red.
 const LOGO_NAME: &str = "ZAXNES";
 const LOGO_PLUS: &str = " PLUS";
+/// Zaxnes Plus: the 5 x 7 pixel letters of the logo, a row per byte, the left square the high
+/// bit of five. Letters it does not have are blank.
+const fn pixel_letter(letter: char) -> [u8; 7] {
+    match letter {
+        'Z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'X' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
+        'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
+        'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        _ => [0; 7],
+    }
+}
+
 /// What marks a favourite game in the home list (AMD-053 REQ-UI-210; the form is free).
 const FAVORITE_MARKER: &str = "*";
 /// A value a game has of its own, and the hint of the list when the game has some.
@@ -151,10 +168,12 @@ impl Painter<'_> {
         {
             let _heading = self.heading.map(|font| self.ui.push_font(font));
             if title == text::PRODUCT_NAME {
-                // The game list carries the logo: the name, then "PLUS" in red.
-                self.text(metrics.padding, metrics.padding, TEXT, LOGO_NAME);
-                let x = metrics.padding + self.ui.calc_text_size(LOGO_NAME)[0];
-                self.text(x, metrics.padding, NES_RED, LOGO_PLUS);
+                // The game list carries the logo, in the pixel letters of the app icon: the
+                // name, then "PLUS" in red.
+                let pixel = (metrics.heading / 7.0).floor().max(2.0);
+                let top = (metrics.title_band() - stripe - pixel * 7.0) * 0.5;
+                let x = self.pixel_word(metrics.padding, top, pixel, TEXT, LOGO_NAME);
+                self.pixel_word(x + pixel * 2.0, top, pixel, NES_RED, LOGO_PLUS.trim());
             } else {
                 self.text(metrics.padding, metrics.padding, FOCUS, title);
             }
@@ -374,6 +393,29 @@ impl Painter<'_> {
                 );
             }
         }
+    }
+
+    /// Zaxnes Plus: `word` in 5 x 7 pixel letters (those of the logo, upper case only) whose
+    /// squares are `pixel` wide, from `x`, `y`. Returns where the next letter would start.
+    #[allow(clippy::cast_precision_loss)] // at most 7 rows of 5 squares
+    fn pixel_word(&self, x: f32, y: f32, pixel: f32, colour: [f32; 4], word: &str) -> f32 {
+        let mut x = x;
+        for letter in word.chars() {
+            for (row, bits) in pixel_letter(letter).iter().enumerate() {
+                for column in 0..5_u8 {
+                    if bits & (0b10000 >> column) != 0 {
+                        let left = x + f32::from(column) * pixel;
+                        let top = y + row as f32 * pixel;
+                        self.list
+                            .add_rect([left, top], [left + pixel, top + pixel], colour)
+                            .filled(true)
+                            .build();
+                    }
+                }
+            }
+            x += pixel * 6.0;
+        }
+        x - pixel
     }
 
     /// Zaxnes Plus: `button` drawn as a badge whose left edge is at `x` and whose text sits on
