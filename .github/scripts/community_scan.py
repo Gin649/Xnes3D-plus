@@ -2,6 +2,7 @@
 links each topic gives, and test-downloads them. Writes community/scan.json for a person to
 read before choosing what goes into community/profiles.json. Run by community-scan.yml."""
 
+import base64
 import html
 import io
 import json
@@ -26,15 +27,18 @@ def get(url, binary=False):
 
 def topics():
     found = []
-    for page in range(1, 5):
-        text = get(BOARD + ("" if page == 1 else f"?page={page}"))
-        print(f"board page {page}: {len(text)} characters", file=sys.stderr)
+    page = BOARD
+    for _ in range(10):
+        text = get(page)
         links = ["https://itch.io" + l if l.startswith("/") else l
                  for l in re.findall(r'href="((?:https://itch\.io)?/t/\d+/[^"#?]+)"', text)]
-        new = [l for l in dict.fromkeys(links) if l not in found]
-        if not new:
+        found += [l for l in dict.fromkeys(links) if l not in found]
+        # The board pages with a "Next page" link (itch.io pages by a cursor, not a number).
+        nxt = re.search(r'<a[^>]+href="([^"]+)"[^>]*>\s*Next page', text)
+        print(f"board page: {len(found)} topics so far, next: {bool(nxt)}", file=sys.stderr)
+        if not nxt:
             break
-        found += new
+        page = urllib.parse.urljoin(BOARD, html.unescape(nxt.group(1)))
     return found
 
 
@@ -49,6 +53,10 @@ def direct(url):
     m = re.search(r"drive\.google\.com/file/d/([^/]+)", u) or re.search(r"[?&]id=([^&]+)", u)
     if "drive.google.com" in u and m:
         return f"https://drive.google.com/uc?export=download&id={m.group(1)}"
+    if "1drv.ms" in u or "onedrive.live.com" in u:
+        # OneDrive's share API hands out the file itself for a personal share link.
+        token = base64.urlsafe_b64encode(u.encode()).decode().rstrip("=")
+        return f"https://api.onedrive.com/v1.0/shares/u!{token}/root/content"
     return u
 
 
@@ -70,11 +78,13 @@ def probe(url):
             inside = [n for n in zipfile.ZipFile(io.BytesIO(data)).namelist() if n.lower().endswith(".3dn")]
         except Exception:  # noqa: BLE001
             kind = "bad-zip"
-    elif data[:15].lower().startswith(b"<!doctype html") or data[:5].lower() == b"<html":
+    elif b"<html" in data[:2000].lower() or data[:15].lower().startswith(b"<!doctype html"):
         kind = "html"
+        t = re.search(rb"<title>(.*?)</title>", data[:20000], re.S | re.I)
+        name = (t.group(1).decode("utf-8", "replace").strip()[:80] if t else "") or name
     elif name.lower().endswith(".3dn") or final.lower().split("?")[0].endswith(".3dn"):
         kind = "3dn"
-    return {"ok": kind in ("3dn", "zip") and (kind != "zip" or bool(inside)), "kind": kind,
+    return {"direct": direct(url), "ok": kind in ("3dn", "zip") and (kind != "zip" or bool(inside)), "kind": kind,
             "bytes": len(data), "file": name, "zip_3dn": inside}
 
 
