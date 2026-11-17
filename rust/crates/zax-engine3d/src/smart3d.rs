@@ -10,8 +10,10 @@
 //! - a background shape is placed by how filled in it is: mostly empty (distant details) thin,
 //!   solid (ground, bricks, pipes) thick, the rest in between; a shape covering most of the
 //!   screen is a backdrop, at the back;
-//! - a status bar (score, lives, health) is kept as a thin flat panel of the interface layer, with
-//!   no shadow. It is told by the split scrolling NES games use for it: a band at the top or the
+//! - a status bar (score, lives, health) is kept as a thin flat panel with no shadow. It stays on
+//!   the first layer like the rest: moving only the pieces recognised as the bar to the interface
+//!   layer pulled them away from the pieces that were not (a digit that just changed), and
+//!   scrambled the bar. It is told by the split scrolling NES games use for it: a band at the top or the
 //!   bottom of the screen whose tiles do not scroll with the rest. A pattern first learned while
 //!   the level stood still becomes a status bar the first frame its band is seen standing still
 //!   while the level scrolls (`promote_status_bars`).
@@ -83,7 +85,7 @@ pub fn apply(kind: Kind, instance: &mut PatternInstance) {
         Kind::Medium => (4, ZLayer::L1),
         Kind::Solid => (8, ZLayer::L1),
         Kind::Backdrop => (2, ZLayer::L3),
-        Kind::StatusBar => (1, ZLayer::Ui),
+        Kind::StatusBar => (1, ZLayer::L1),
     };
     instance.depth = depth;
     instance.layer = layer;
@@ -165,7 +167,7 @@ fn is_status_bar(frame: &ConversionFrame, shape: ShapeId, playfield: Option<(i32
 }
 
 /// The status bars of this frame that were learned as something else, while the level stood
-/// still, become status bars now (once: a pattern already on the interface layer is left alone).
+/// still, become status bars now (once: a pattern already made a status bar is left alone).
 pub(crate) fn promote_status_bars(frame: &ConversionFrame, context: &mut SegmentContext<'_>) {
     if !enabled() {
         return;
@@ -191,7 +193,7 @@ pub(crate) fn promote_status_bars(frame: &ConversionFrame, context: &mut Segment
         let Some(instance) = pattern.instances_mut().first_mut() else {
             continue;
         };
-        if instance.layer == ZLayer::Ui {
+        if instance.depth == 1 && !instance.cast_shadow {
             continue;
         }
         apply(Kind::StatusBar, instance);
