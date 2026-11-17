@@ -1747,6 +1747,8 @@ fn load_settings(options: &AppOptions, paths: &UserDataPaths) -> (SettingsStore,
     }
     if cfg!(target_os = "android") {
         handheld::defaults::apply_android(&mut model);
+        // Xnes3D+: the interface is in English.
+        model.set(SettingId::UiLanguage, SettingValue::from("en"));
     }
     // Rust-only (owner request): the region comes from the ROM header unless the user turned the
     // automatic mode off, so a European dump runs at 50 Hz (`emu.auto_tv_mode` is off in C#).

@@ -44,6 +44,8 @@ pub struct DesktopInputSource {
     pub pointer_over_ui: bool,
     /// Size of the render target, which the Zapper aims in.
     pub render_target_size: [f32; 2],
+    /// Xnes3D+: displayed frames counted for the turbo buttons.
+    turbo_frames: u32,
 }
 
 impl DesktopInputSource {
@@ -54,6 +56,7 @@ impl DesktopInputSource {
         Self {
             bindings,
             pads: GamepadAssignment::new(),
+            turbo_frames: 0,
             rebinding: RebindingSession::new(),
             store,
             saved_revision,
@@ -162,6 +165,7 @@ impl DesktopInputSource {
         self.rebinding
             .capture(&mut self.bindings, Some(access), keyboard);
         let suppressed = self.rebinding.suppresses_actions();
+        self.turbo_frames = self.turbo_frames.wrapping_add(1);
         let (player_one, player_two) = if suppressed {
             (InputAction::NONE, InputAction::NONE)
         } else {
@@ -219,6 +223,9 @@ impl DesktopInputSource {
             if let Some(set) = self.pads.gamepad_bindings(hub, &mut self.bindings, player) {
                 mask |= set.sample(|control| gamepad_pressed(pad, control));
             }
+            if cfg!(target_os = "android") {
+                mask |= retroarch_extras(pad, self.turbo_frames);
+            }
         }
         mask
     }
@@ -270,6 +277,36 @@ fn pointer_differs(left: [f32; 2], right: [f32; 2]) -> bool {
 
 fn keyboard_pressed(keyboard: &dyn KeyboardDevice, control: PhysicalControl) -> bool {
     control.is_keyboard() && keyboard.is_down(control.code)
+}
+
+/// Xnes3D+ on Android, as RetroArch has them: the left stick plays as the D-pad, and the X and Y
+/// buttons are turbo A and turbo B (pressed for two displayed frames, released for two, about 15
+/// presses a second at 60 Hz). Read from the pad itself, beside the bindings, since a binding holds
+/// one control per action and the D-pad keeps its own.
+fn retroarch_extras(pad: &dyn GamepadDevice, frames: u32) -> InputAction {
+    use zax_platform::input::standard_gamepad as gamepad;
+    let held = |control: PhysicalControl| gamepad_pressed(pad, control);
+    let mut mask = InputAction::NONE;
+    for (control, action) in [
+        (PhysicalControl::axis_negative(gamepad::LEFT_STICK_X), InputAction::LEFT),
+        (PhysicalControl::axis_positive(gamepad::LEFT_STICK_X), InputAction::RIGHT),
+        (PhysicalControl::axis_positive(gamepad::LEFT_STICK_Y), InputAction::UP),
+        (PhysicalControl::axis_negative(gamepad::LEFT_STICK_Y), InputAction::DOWN),
+    ] {
+        if held(control) {
+            mask |= action;
+        }
+    }
+    if frames % 4 < 2 {
+        // The X label (the top button on the AYN Thor) is turbo A, the Y label turbo B.
+        if held(PhysicalControl::button(gamepad::WEST)) {
+            mask |= InputAction::A;
+        }
+        if held(PhysicalControl::button(gamepad::NORTH)) {
+            mask |= InputAction::B;
+        }
+    }
+    mask
 }
 
 fn gamepad_pressed(pad: &dyn GamepadDevice, control: PhysicalControl) -> bool {

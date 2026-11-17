@@ -185,7 +185,9 @@ impl GameLibraryEntry {
         if self.is_2d_mode {
             TWO_DIMENSIONAL_MODE_TITLE
         } else if self.is_default_three_dimensional {
-            DEFAULT_THREE_DIMENSIONAL_TITLE
+            // Xnes3D+: shown in English, as Smart 3D (the stored title stays the catalogue's).
+            let _ = DEFAULT_THREE_DIMENSIONAL_TITLE;
+            "Smart 3D (no profile)"
         } else {
             &self.title
         }

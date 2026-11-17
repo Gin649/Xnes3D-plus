@@ -617,7 +617,8 @@ impl HandheldUi {
     /// camera is left alone: back in 3D, it has the angle and the zoom it had.
     fn update_flat_view(&mut self, pad: &PadState, seconds: f32, host: &mut AppHost) {
         self.follow_head_on(host);
-        if self.screen != Screen::InGame {
+        // Xnes3D+: on Android, Y is turbo B in a game (the input source), not the 2D view.
+        if self.screen != Screen::InGame || cfg!(target_os = "android") {
             self.flat_view = None;
             return;
         }
@@ -915,8 +916,10 @@ impl HandheldUi {
             }
             // X: the default view (owner request); Y and L2 are held buttons, followed by
             // `update_flat_view` and `update_camera_memory`.
+            // Xnes3D+: on Android X is turbo A in a game, so the default view is in the menu
+            // (Camera preset) instead.
             Screen::InGame => {
-                if button == PadButton::X {
+                if button == PadButton::X && !cfg!(target_os = "android") {
                     frame
                         .host
                         .enqueue(Command::ResetView, CommandArgs::default());

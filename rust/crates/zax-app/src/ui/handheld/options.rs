@@ -216,12 +216,12 @@ pub const ROWS: [OptionRow; 13] = [
 ///
 /// Xnes3D+: the games and profiles page first, then RetroAchievements and the controls, the
 /// rows most players look for; the picture and performance rows after them.
-pub const TOUCH_ROWS: [OptionRow; 15] = [
+/// Xnes3D+ is in English only, so it has no Language row.
+pub const TOUCH_ROWS: [OptionRow; 14] = [
     OptionRow::Page(OptionsPage::Library),
     OptionRow::Achievements,
     OptionRow::Controls,
     OptionRow::TouchPad,
-    OptionRow::Language,
     OptionRow::Volume,
     OptionRow::RenderScale,
     OptionRow::Shadows,

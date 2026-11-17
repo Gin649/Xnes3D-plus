@@ -63,6 +63,8 @@ pub enum Kind {
 
 /// Below this share of drawn pixels a background shape is sparse.
 const SPARSE_FILL: f32 = 0.25;
+/// Xnes3D+: a background shape of at most this many tiles is thin, whatever its fill.
+const SMALL_SHAPE_TILES: i32 = 2;
 /// From this share of drawn pixels a background shape is solid.
 const SOLID_FILL: f32 = 0.70;
 /// A status bar is at most this many tiles tall...
@@ -83,7 +85,7 @@ pub fn apply(kind: Kind, instance: &mut PatternInstance) {
         // Thin but still in front: small shapes such as the letters of a word are each a shape,
         // and some letters are sparse and some not, so moving the sparse ones back would break
         // words apart. Only large backdrops go to the back layers.
-        Kind::Sparse => (2, ZLayer::L1),
+        Kind::Sparse => (1, ZLayer::L1),
         Kind::Medium => (6, ZLayer::L1),
         Kind::Solid => (12, ZLayer::L1),
         Kind::Backdrop => (2, ZLayer::L4),
@@ -111,6 +113,11 @@ pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
         return Kind::Backdrop;
     }
     let tiles = i32::try_from(data.tile_count()).unwrap_or(i32::MAX).max(1);
+    // Xnes3D+: a shape of one or two tiles is most often a letter of the game's text, or a small
+    // detail: kept thin, so words read cleanly instead of turning into thick blocks.
+    if tiles <= SMALL_SHAPE_TILES {
+        return Kind::Sparse;
+    }
     #[allow(clippy::cast_precision_loss)] // at most 35 x 33 tiles of 64 pixels
     let fill = data.pixel_count() as f32 / (tiles * 64) as f32;
     if fill < SPARSE_FILL {

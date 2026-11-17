@@ -107,7 +107,9 @@ const HOME_HINTS: &[Hint] = &[
     // AMD-053 REQ-UI-210: the one free button of the home screen marks a favourite.
     hint("L2", keys::HANDHELD_HINT_FAVORITE),
 ];
+// Xnes3D+: every screen shows A (choose) and B (back), so A always confirms and B always backs.
 const HACKS_HINTS: &[Hint] = &[
+    hint("A", keys::HANDHELD_HINT_CHOOSE),
     hint("</>", keys::HANDHELD_HINT_CHANGE),
     hint("B", keys::HANDHELD_HINT_BACK),
 ];
@@ -116,10 +118,12 @@ const PROFILES_HINTS: &[Hint] = &[
     hint("B", keys::HANDHELD_HINT_BACK),
 ];
 const OPTIONS_HINTS: &[Hint] = &[
+    hint("A", keys::HANDHELD_HINT_CHOOSE),
     hint("</>", keys::HANDHELD_HINT_CHANGE),
     hint("B", keys::HANDHELD_HINT_BACK),
 ];
 const GAME_OPTIONS_HINTS: &[Hint] = &[
+    hint("A", keys::HANDHELD_HINT_CHOOSE),
     hint("</>", keys::HANDHELD_HINT_CHANGE),
     hint("X", keys::HANDHELD_HINT_RESET_ALL),
     hint("B", keys::HANDHELD_HINT_BACK),
@@ -141,7 +145,7 @@ const STATES_LOAD_HINTS: &[Hint] = &[
 const OVERLAY_HINTS: &[Hint] = &[
     hint("A", keys::HANDHELD_HINT_CHOOSE),
     hint("</>", keys::HANDHELD_HINT_CHANGE),
-    hint("B", keys::HANDHELD_MENU_RESUME),
+    hint("B", keys::HANDHELD_HINT_BACK),
 ];
 
 const ACHIEVEMENTS_HINTS: &[Hint] = &[
