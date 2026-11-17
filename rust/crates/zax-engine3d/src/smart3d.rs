@@ -554,6 +554,9 @@ fn sky_color(frame: &ConversionFrame) -> Option<u8> {
 /// sky around a cloud, a rope or a rooftop, which goes back with it instead of standing out.
 fn is_mostly_sky(frame: &ConversionFrame, tile: &FrameTile, sky: u8) -> bool {
     let image = tile.image();
+    if is_plain(tile) {
+        return nes_color(frame, tile, image.color_at(0, 0)) == Some(sky);
+    }
     let mut colors = [None; 4];
     for (value, slot) in colors.iter_mut().enumerate().skip(1) {
         *slot = i32::try_from(value)
@@ -573,8 +576,8 @@ fn is_mostly_sky(frame: &ConversionFrame, tile: &FrameTile, sky: u8) -> bool {
 }
 
 /// Xnes3D+ (owner request): the sky of this frame goes back, so the scenery stands in front of
-/// it instead of flat against it. Only single-tile background shapes are looked at, which with
-/// no profile is nearly all of the background.
+/// it instead of flat against it. A background shape goes back when at least half of its tiles
+/// are mostly sky (a run of plain sky tiles is often one shape).
 fn push_sky_back(frame: &mut ConversionFrame) {
     let Some(sky) = sky_color(frame) else {
         return;
@@ -589,12 +592,12 @@ fn push_sky_back(frame: &mut ConversionFrame) {
                 return false;
             }
             let data = frame.shape(instance.shape());
-            if data.tile_count() != 1 {
-                return false;
-            }
-            data.tiles()
-                .first()
-                .is_some_and(|&tile| is_mostly_sky(frame, frame.tile(tile), sky))
+            let sky_tiles = data
+                .tiles()
+                .iter()
+                .filter(|&&tile| is_mostly_sky(frame, frame.tile(tile), sky))
+                .count();
+            sky_tiles * 2 >= data.tile_count().max(1)
         })
         .collect();
     for id in pushed {
