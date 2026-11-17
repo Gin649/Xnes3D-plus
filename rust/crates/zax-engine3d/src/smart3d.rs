@@ -43,6 +43,10 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// 2 Select, 3 Start, 4 Up, 5 Down, 6 Left, 7 Right). The host sets it every frame.
 static PAD: AtomicU8 = AtomicU8::new(0);
 
+/// Xnes3D+: the NES colour of the sky once a sky tile is found, or `NO_SKY`.
+static SKY: AtomicU8 = AtomicU8::new(NO_SKY);
+const NO_SKY: u8 = 0xFF;
+
 /// Xnes3D+: what is known so far about which sprite is the main character.
 static TRACKER: Mutex<Tracker> = Mutex::new(Tracker::new());
 
@@ -50,6 +54,7 @@ static TRACKER: Mutex<Tracker> = Mutex::new(Tracker::new());
 /// profile).
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
+    SKY.store(NO_SKY, Ordering::Relaxed);
     // A new game starts with no main character known.
     if let Ok(mut tracker) = TRACKER.lock() {
         *tracker = Tracker::new();
@@ -92,6 +97,8 @@ pub enum Kind {
 const SPARSE_FILL: f32 = 0.25;
 /// Xnes3D+: a plain tile is the sky when at least this share of the background tiles shows it.
 const SKY_SHARE: f32 = 0.20;
+/// Xnes3D+: the sky's tiles sit, on average, above this screen row (pixels).
+const SKY_LOWEST_MEAN_Y: i64 = 120;
 /// Xnes3D+: a background shape at most this many tiles tall, and not solid, is a line of text.
 const TEXT_LINE_ROWS: i32 = 1;
 /// From this share of drawn pixels a background shape is solid.
@@ -152,7 +159,7 @@ pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
     if tiles == 1 {
         if let Some(&first) = data.tiles().first() {
             let tile = frame.tile(first);
-            if is_sky_tile(frame, tile) {
+            if is_sky_tile(frame, tile) || is_mostly_sky(frame, tile) {
                 return Kind::Sky;
             }
             if fill < SOLID_FILL && is_text_tile(frame, tile) {
@@ -175,33 +182,82 @@ pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
     }
 }
 
-/// Xnes3D+: true when `tile` is plain (all its pixels drawn, in one colour) and the same image
-/// covers a large share of the background, as a sky does.
+/// Xnes3D+: true when the tile is plain: all its pixels drawn, in one colour.
+fn is_plain(tile: &FrameTile) -> bool {
+    tile.image().pixel_count() >= 64 && tile.image().color_count() == 1
+}
+
+/// Xnes3D+: the NES colour a pixel value (1 to 3) of a background tile shows in this frame.
+fn nes_color(frame: &ConversionFrame, tile: &FrameTile, value: i32) -> Option<u8> {
+    let entry = usize::try_from(tile.palette() * 4 + value).ok()?;
+    frame.palette().get(entry).map(|color| color & 0x3F)
+}
+
+/// Xnes3D+: true when `tile` is plain, the same image covers a large share of the background,
+/// and those tiles sit mostly in the upper half of the screen, as a sky does (a large plain
+/// floor or wall lower down is left with the scenery). Its colour is kept as the sky's.
 fn is_sky_tile(frame: &ConversionFrame, tile: &FrameTile) -> bool {
-    let image = tile.image();
-    if image.pixel_count() < 64 || image.color_count() != 1 {
+    if !is_plain(tile) {
         return false;
     }
+    let id = tile.image().id();
     let mut total = 0u32;
     let mut same = 0u32;
+    let mut height = 0i64;
     for other in frame.background_tiles() {
         total += 1;
-        if other.image().id() == image.id() {
+        if other.image().id() == id {
             same += 1;
+            height += i64::from(other.y());
         }
     }
     #[allow(clippy::cast_precision_loss)] // at most a few thousand tiles
     let share = same as f32 / total.max(1) as f32;
-    share >= SKY_SHARE
+    if share < SKY_SHARE || height / i64::from(same.max(1)) >= SKY_LOWEST_MEAN_Y {
+        return false;
+    }
+    let value = tile.image().color_at(0, 0);
+    if let Some(color) = nes_color(frame, tile, value) {
+        SKY.store(color, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Xnes3D+: true when at least half of the tile's pixels show the sky's colour: the edge of
+/// the sky around a cloud, a rope or a rooftop goes back with the sky instead of standing out
+/// as a block.
+fn is_mostly_sky(frame: &ConversionFrame, tile: &FrameTile) -> bool {
+    let sky = SKY.load(Ordering::Relaxed);
+    if sky == NO_SKY {
+        return false;
+    }
+    let image = tile.image();
+    let mut colors = [None; 4];
+    for (value, slot) in colors.iter_mut().enumerate().skip(1) {
+        *slot = i32::try_from(value)
+            .ok()
+            .and_then(|value| nes_color(frame, tile, value));
+    }
+    let mut sky_pixels = 0;
+    for y in 0..8 {
+        for x in 0..8 {
+            let value = usize::try_from(image.color_at(x, y)).unwrap_or(0);
+            if value != 0 && colors.get(value).copied().flatten() == Some(sky) {
+                sky_pixels += 1;
+            }
+        }
+    }
+    sky_pixels >= 32
 }
 
 /// Xnes3D+: true when the cells above and below `tile` hold no background tile (only the
 /// background colour): the tile is part of a line of text, such as a story or a title screen.
+/// Text printed on a plain panel needs nothing here: its tiles are full, as the panel's are,
+/// so both get the same depth and the letters sit flush with the panel.
 fn is_text_tile(frame: &ConversionFrame, tile: &FrameTile) -> bool {
     let cell = tile.position();
-    let above = Cell::new(cell.x, cell.y - 1);
-    let below = Cell::new(cell.x, cell.y + 1);
-    frame.background_at_cell(above).is_none() && frame.background_at_cell(below).is_none()
+    let clear = |cell: Cell| frame.background_at_cell(cell).is_none();
+    clear(Cell::new(cell.x, cell.y - 1)) && clear(Cell::new(cell.x, cell.y + 1))
 }
 
 /// The fine scroll of the playfield in this frame: the position within its 8 x 8 cell (x mod 8,
