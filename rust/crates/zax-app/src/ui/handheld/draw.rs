@@ -348,7 +348,8 @@ impl Painter<'_> {
         let mut lines: Vec<usize> = Vec::new();
         let mut used = metrics.padding;
         for (index, (button, meaning, _)) in hints.iter().enumerate() {
-            let wide = self.width(button) + metrics.padding * 0.5 + self.width(meaning);
+            // Xnes3D+: the button is a badge, wider than its letters.
+            let wide = self.badge_width(button) + metrics.padding * 0.5 + self.width(meaning);
             if index > 0 && used + wide > room {
                 lines.push(index);
                 used = metrics.padding;
@@ -421,13 +422,20 @@ impl Painter<'_> {
         x - pixel
     }
 
+    /// Xnes3D+: how wide the badge of `button` is.
+    fn badge_width(&self, button: &str) -> f32 {
+        let metrics = &self.metrics;
+        let height = metrics.font + metrics.padding * 0.4;
+        (self.width(button) + metrics.padding * 0.8).max(height)
+    }
+
     /// Xnes3D+: `button` drawn as a badge whose left edge is at `x` and whose text sits on
     /// the line `y`. Returns its width.
     fn button_badge(&self, x: f32, y: f32, button: &str) -> f32 {
         let metrics = &self.metrics;
         let text_width = self.width(button);
         let height = metrics.font + metrics.padding * 0.4;
-        let width = (text_width + metrics.padding * 0.8).max(height);
+        let width = self.badge_width(button);
         let top = y - metrics.padding * 0.2;
         let colour = if matches!(button, "A" | "B") {
             NES_RED
