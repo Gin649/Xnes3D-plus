@@ -7,9 +7,9 @@
 //!
 //! - a sprite stands out from the scenery, thicker than the background; one the game draws behind
 //!   the background (doorways, bushes) sits further back and thinner;
-//! - a background shape is placed by how filled in it is: mostly empty (distant details) thin and
-//!   further back, solid (ground, bricks, pipes) thick at the front, the rest as before; a shape
-//!   covering most of the screen is a backdrop, at the back;
+//! - a background shape is placed by how filled in it is: mostly empty (distant details) thin,
+//!   solid (ground, bricks, pipes) thick, the rest in between; a shape covering most of the
+//!   screen is a backdrop, at the back;
 //! - a status bar (score, lives, health) is kept as a thin flat panel of the interface layer, with
 //!   no shadow. It is told by the split scrolling NES games use for it: a band at the top or the
 //!   bottom of the screen whose tiles do not scroll with the rest. A pattern first learned while
@@ -76,7 +76,10 @@ pub fn apply(kind: Kind, instance: &mut PatternInstance) {
     let (depth, layer) = match kind {
         Kind::Sprite => (6, ZLayer::L1),
         Kind::SpriteBehind => (3, ZLayer::L2),
-        Kind::Sparse => (2, ZLayer::L2),
+        // Thin but still in front: small shapes such as the letters of a word are each a shape,
+        // and some letters are sparse and some not, so moving the sparse ones back would break
+        // words apart. Only large backdrops go to the back layers.
+        Kind::Sparse => (2, ZLayer::L1),
         Kind::Medium => (4, ZLayer::L1),
         Kind::Solid => (8, ZLayer::L1),
         Kind::Backdrop => (2, ZLayer::L3),

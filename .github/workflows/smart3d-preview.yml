@@ -59,12 +59,13 @@ jobs:
           SDL_AUDIODRIVER: dummy
         run: |
           # Start on the title screen, then flap every 20 frames.
-          press="120-130:start,180-190:start"
-          for f in $(seq 240 18 1600); do press="$press,$f-$((f+3)):a"; done
+          press=""
+          for f in $(seq 60 40 400); do press="$press${press:+,}$f-$((f+6)):start"; done
+          for f in $(seq 440 18 1600); do press="$press,$f-$((f+3)):a"; done
           out="$RUNNER_TEMP/preview"
           mkdir -p "$out"
           for frames in 400 900 1500; do
-            for angle in 0.81,0.81 0.35,-0.55; do
+            for angle in 0.81,0.81 22,-30; do
               for mode in flat default-3d smart-3d; do
                 flag=""; [ "$mode" != flat ] && flag="--$mode"
                 dir="$out/raw/$frames-$angle-$mode"
