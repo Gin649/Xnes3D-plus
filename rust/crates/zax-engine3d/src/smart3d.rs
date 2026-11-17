@@ -279,6 +279,8 @@ const MAIN_SCORE: f32 = 30.0;
 const MAX_SCORE: f32 = 120.0;
 /// Another sprite takes the place only once it scores this much more than the current one.
 const SWITCH_MARGIN: f32 = 15.0;
+/// Sprites this close to the main character (pixels) are taken as pieces of it.
+const PIECE_MARGIN: f32 = 4.0;
 /// Score lost by a sprite each frame it moves sideways while no direction is pressed.
 const IDLE_PENALTY: f32 = 0.5;
 
@@ -467,7 +469,8 @@ pub(crate) fn raise_main_character(frame: &mut ConversionFrame) {
         return;
     };
 
-    // The main character's box this frame, grown by one pixel so touching pieces join it.
+    // The main character's box this frame, grown a little so the pieces drawn next to it (a
+    // head in another palette, a weapon) join it.
     let Some(area) = sprites
         .iter()
         .zip(&owners)
@@ -477,7 +480,12 @@ pub(crate) fn raise_main_character(frame: &mut ConversionFrame) {
     else {
         return;
     };
-    let grown = [area[0] - 1.0, area[1] - 1.0, area[2] + 1.0, area[3] + 1.0];
+    let grown = [
+        area[0] - PIECE_MARGIN,
+        area[1] - PIECE_MARGIN,
+        area[2] + PIECE_MARGIN,
+        area[3] + PIECE_MARGIN,
+    ];
     let raised: Vec<ShapeId> = sprites
         .iter()
         .filter(|(_, other)| {
