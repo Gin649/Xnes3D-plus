@@ -1,0 +1,27 @@
+name: Scan community profiles
+
+# Xnes3D+: reads the 3dSen Maker Profile Repository board, test-downloads each profile link, and
+# commits the report to the community-scan branch (community/scan.json). Nothing reaches the app
+# from here: a person reads the report and fills community/profiles.json. Run it from the
+# Actions tab.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to push the report branch
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan the board
+        run: python3 -I .github/scripts/community_scan.py
+      - name: Publish the report on the community-scan branch
+        run: |
+          git config user.name "Claude"
+          git config user.email "noreply@anthropic.com"
+          git checkout -B community-scan
+          git add community/scan.json
+          git commit -m "Uploaded by Claude"
+          git push -f origin community-scan
