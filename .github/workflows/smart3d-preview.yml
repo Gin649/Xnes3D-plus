@@ -36,8 +36,13 @@ jobs:
 
       - name: Build FlappyZaxNes from its source
         run: |
-          make -C rust/crates/zax-app/demo/source
-          cp rust/crates/zax-app/demo/source/FlappyZaxNes.nes "$RUNNER_TEMP/game.nes"
+          cfg="$PWD/.github/fork/flappy.cfg"
+          build="$RUNNER_TEMP/flappy"
+          mkdir -p "$build"
+          (cd rust/crates/zax-app/demo/source
+           for s in src/*.s; do ca65 -g "$s" -o "$build/$(basename "$s" .s).o" -t nes; done
+           ld65 -C "$cfg" "$build"/*.o -o "$RUNNER_TEMP/game.nes")
+          ls -la "$RUNNER_TEMP/game.nes"
           cd rust/crates/zax-app/demo
           [ -f FlappyZaxNes.nes ] || : > FlappyZaxNes.nes
           [ -f flappyzaxnes.3dn ] || : > flappyzaxnes.3dn
