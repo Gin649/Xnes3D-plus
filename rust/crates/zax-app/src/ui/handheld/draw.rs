@@ -773,7 +773,7 @@ impl HandheldUi {
         if total == 0 && crate::android_bridge::available() {
             hints = vec![
                 ("A", "Choose ROM folder".to_owned(), TEXT),
-                ("Y", strings::get(keys::HANDHELD_HINT_OPTIONS), TEXT),
+                ("X", strings::get(keys::HANDHELD_HINT_OPTIONS), TEXT),
             ];
         }
         painter.hint_entries(&hints);

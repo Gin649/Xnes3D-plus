@@ -540,6 +540,11 @@ impl ConversionEngine {
             self.hook_time = Some(started.elapsed());
         }
 
+        // Xnes3D+: in Smart 3D, the main character comes a little forward.
+        if !self.state.two_dimensional_mode {
+            crate::smart3d::raise_main_character(self.state.converting_frame_mut());
+        }
+
         // (e) instance positions.
         self.state.calculate_positions();
         self.state.converting_frame()

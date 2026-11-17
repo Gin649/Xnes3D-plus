@@ -1420,9 +1420,13 @@ impl GameSession {
             zapper_byte,
         );
         let frame_count = self.core.frame_count();
-        self.movie
+        let word = self
+            .movie
             .as_mut()
-            .map_or(word, |movie| movie.input(frame_count, word))
+            .map_or(word, |movie| movie.input(frame_count, word));
+        // Xnes3D+: Smart 3D finds the main character by the D-pad of player 1.
+        zax_engine3d::smart3d::set_pad(word.to_le_bytes()[0]);
+        word
     }
 
     /// The tile capture, the conversion and the frame hooks of the frame the core just ran (the

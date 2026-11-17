@@ -84,6 +84,9 @@ impl SdlPlatform {
     }
 
     /// A platform for the handheld mode: no pointer, and the gamepad navigates the interface.
+    /// Xnes3D+: on Android the face buttons go by their place too. A handheld such as the AYN
+    /// Thor reports its right button (labelled A) as the pad's B and its top one (X) as Y, so
+    /// without the swap A went back in the menus and the hints named the wrong buttons.
     #[must_use]
     pub const fn for_handheld() -> Self {
         Self {
@@ -91,7 +94,7 @@ impl SdlPlatform {
             ignore_pointer: true,
             gamepad: true,
             feeds_pad: true,
-            positional: false,
+            positional: cfg!(target_os = "android"),
             pad: PadState::new(),
         }
     }
@@ -185,10 +188,13 @@ impl SdlPlatform {
         let Some((pad_button, key)) = pad_mapping(button) else {
             return;
         };
-        let pad_button = if self.positional {
-            at_handheld_place(pad_button)
+        let (pad_button, key) = if self.positional {
+            // Xnes3D+: the menu navigation follows the swap too, so the button that chooses in
+            // the handheld screens is also the one that activates an item.
+            let placed = at_handheld_place(pad_button);
+            (placed, face_key(placed).or(key))
         } else {
-            pad_button
+            (pad_button, key)
         };
         self.pad.set(pad_button, down);
         if let Some(key) = key.filter(|_| self.gamepad) {
@@ -276,6 +282,17 @@ const fn at_handheld_place(labelled: PadButton) -> PadButton {
         PadButton::X => PadButton::Y,
         PadButton::Y => PadButton::X,
         other => other,
+    }
+}
+
+/// Xnes3D+: the `ImGui` key of a face button of the handheld: A activates, B cancels.
+const fn face_key(button: PadButton) -> Option<Key> {
+    match button {
+        PadButton::A => Some(Key::GamepadFaceDown),
+        PadButton::B => Some(Key::GamepadFaceRight),
+        PadButton::X => Some(Key::GamepadFaceUp),
+        PadButton::Y => Some(Key::GamepadFaceLeft),
+        _ => None,
     }
 }
 
@@ -381,7 +398,11 @@ mod tests {
         assert_eq!(PadButton::Y, at_handheld_place(PadButton::X));
         assert_eq!(PadButton::Start, at_handheld_place(PadButton::Start));
         assert!(SdlPlatform::new().positional);
-        assert!(!SdlPlatform::for_handheld().positional);
+        // Xnes3D+: the handheld mode swaps them on Android only.
+        assert_eq!(
+            cfg!(target_os = "android"),
+            SdlPlatform::for_handheld().positional
+        );
     }
 
     /// Dear `ImGui` allows one context per process, so the platforms are checked in turn.

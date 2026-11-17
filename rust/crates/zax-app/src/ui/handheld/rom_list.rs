@@ -274,7 +274,9 @@ impl RomListModel {
                     }
                 });
             }
-            PadButton::X => {
+            // Xnes3D+: Y picks the 3D profile and X, the top button, opens the options (owner
+            // request: Options on the top button, now that the labels match the buttons).
+            PadButton::Y => {
                 return self
                     .selected_entry()
                     .filter(|entry| !entry.resume)
@@ -288,7 +290,7 @@ impl RomListModel {
                     .filter(|entry| !entry.resume && entry.profile.is_some())
                     .map(|entry| RomListCommand::ToggleFavorite(entry.path.clone()));
             }
-            PadButton::Y => return Some(RomListCommand::Options),
+            PadButton::X => return Some(RomListCommand::Options),
             // L1 the widescreen, R1 the hacks; Start plays, as A does (owner request).
             PadButton::L1 => {
                 return self
@@ -406,7 +408,7 @@ mod tests {
             model.handle(PadButton::Start)
         );
         // Nothing of a ROM file applies to it.
-        assert_eq!(None, model.handle(PadButton::X));
+        assert_eq!(None, model.handle(PadButton::Y));
         assert_eq!(None, model.handle(PadButton::Select));
         assert_eq!(None, model.handle(PadButton::L1));
         assert_eq!(None, model.handle(PadButton::R1));
@@ -460,9 +462,9 @@ mod tests {
         );
         assert_eq!(
             Some(RomListCommand::ChooseProfile(path)),
-            model.handle(PadButton::X)
+            model.handle(PadButton::Y)
         );
-        assert_eq!(Some(RomListCommand::Options), model.handle(PadButton::Y));
+        assert_eq!(Some(RomListCommand::Options), model.handle(PadButton::X));
         assert!(matches!(
             model.handle(PadButton::Select),
             Some(RomListCommand::GameOptions(_))

@@ -18,9 +18,13 @@
 //!   the level stood still becomes a status bar the first frame its band is seen standing still
 //!   while the level scrolls (`promote_status_bars`).
 //!
+//! - the main character, the sprite that keeps moving the way the D-pad is pressed, comes a
+//!   little forward so it stands out from the scenery (`raise_main_character`).
+//!
 //! The numbers are first values to be tuned on real games.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::Mutex;
 
 use crate::engine::build_geometry;
 use crate::frame::{ConversionFrame, ShapeId};
@@ -30,10 +34,26 @@ use crate::segmenter::SegmentContext;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// Xnes3D+: the buttons of player 1 in the frame being played, in the NES order (bit 0 A, 1 B,
+/// 2 Select, 3 Start, 4 Up, 5 Down, 6 Left, 7 Right). The host sets it every frame.
+static PAD: AtomicU8 = AtomicU8::new(0);
+
+/// Xnes3D+: what is known so far about which sprite is the main character.
+static TRACKER: Mutex<Tracker> = Mutex::new(Tracker::new());
+
 /// Turns Smart 3D on for the game about to start (the "3D by default" entry) or off (2D Mode or a
 /// profile).
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
+    // A new game starts with no main character known.
+    if let Ok(mut tracker) = TRACKER.lock() {
+        *tracker = Tracker::new();
+    }
+}
+
+/// Xnes3D+: the buttons player 1 holds in the frame about to run (port 1 of the input word).
+pub fn set_pad(buttons: u8) {
+    PAD.store(buttons, Ordering::Relaxed);
 }
 
 /// True while the game plays with Smart 3D.
@@ -65,6 +85,8 @@ pub enum Kind {
 const SPARSE_FILL: f32 = 0.25;
 /// Xnes3D+: a background shape of at most this many tiles is thin, whatever its fill.
 const SMALL_SHAPE_TILES: i32 = 2;
+/// Xnes3D+: a background shape at most this many tiles tall, and not solid, is a line of text.
+const TEXT_LINE_ROWS: i32 = 1;
 /// From this share of drawn pixels a background shape is solid.
 const SOLID_FILL: f32 = 0.70;
 /// A status bar is at most this many tiles tall...
@@ -120,6 +142,12 @@ pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
     }
     #[allow(clippy::cast_precision_loss)] // at most 35 x 33 tiles of 64 pixels
     let fill = data.pixel_count() as f32 / (tiles * 64) as f32;
+    // Xnes3D+: a background shape one tile tall that is not solid is most often a line of text
+    // (a whole word or sentence joins into one shape), so it is kept thin like a single letter.
+    // A solid one-tile ledge or platform still gets its full depth.
+    if data.tile_size().y <= TEXT_LINE_ROWS && fill < SOLID_FILL {
+        return Kind::Sparse;
+    }
     if fill < SPARSE_FILL {
         Kind::Sparse
     } else if fill >= SOLID_FILL {
@@ -213,5 +241,233 @@ pub(crate) fn promote_status_bars(frame: &ConversionFrame, context: &mut Segment
             context.geometry,
             context.settings.render_algorithm,
         );
+    }
+}
+
+// ---- Xnes3D+: the main character -----------------------------------------------------------
+
+/// How far the main character comes forward, in pixels (the scenery's front is at 0).
+const MAIN_CHARACTER_RAISE: f32 = 4.0;
+/// A sprite is followed from one frame to the next when its centre moved at most this far.
+const FOLLOW_DISTANCE: f32 = 14.0;
+/// Frames a followed sprite may be missing (flicker, a blink after a hit) before it is dropped.
+const MISSING_FRAMES: u8 = 8;
+/// Score a sprite needs before it is taken for the main character: about half a second of
+/// moving the way the D-pad is pressed.
+const MAIN_SCORE: f32 = 30.0;
+/// Highest score, so a sprite that stops being the character loses the place in a few seconds.
+const MAX_SCORE: f32 = 120.0;
+/// Another sprite takes the place only once it scores this much more than the current one.
+const SWITCH_MARGIN: f32 = 15.0;
+
+const PAD_LEFT: u8 = 1 << 6;
+const PAD_RIGHT: u8 = 1 << 7;
+
+/// One sprite followed across frames.
+#[derive(Debug, Clone, Copy)]
+struct Followed {
+    x: f32,
+    y: f32,
+    score: f32,
+    missing: u8,
+    seen: bool,
+}
+
+/// The sprites followed so far, and which one is the main character.
+#[derive(Debug)]
+struct Tracker {
+    followed: Vec<Followed>,
+    main: Option<usize>,
+    last_fine_x: Option<i32>,
+}
+
+impl Tracker {
+    const fn new() -> Self {
+        Self {
+            followed: Vec::new(),
+            main: None,
+            last_fine_x: None,
+        }
+    }
+}
+
+/// The sprite shapes of the frame drawn in front of the background, with their boxes in
+/// pixels (left, top, right, bottom).
+fn front_sprites(frame: &ConversionFrame) -> Vec<(ShapeId, [f32; 4])> {
+    frame
+        .shapes()
+        .iter()
+        .filter_map(|&shape| {
+            let data = frame.shape(shape);
+            if data.background() || data.hidden() {
+                return None;
+            }
+            let (start, end) = (data.pixel_start(), data.pixel_end());
+            #[allow(clippy::cast_precision_loss)] // screen pixels
+            Some((
+                shape,
+                [start.x as f32, start.y as f32, end.x as f32, end.y as f32],
+            ))
+        })
+        .collect()
+}
+
+/// How far the background moved sideways on the screen since the last frame, from the fine
+/// scroll of the playfield: a game scrolling right moves its background left. NES games scroll
+/// a few pixels a frame at most, so the move is taken between -4 and 3.
+fn background_shift(tracker: &mut Tracker, frame: &ConversionFrame) -> i32 {
+    let fine_x = playfield_offset(frame).map(|(x, _)| x);
+    let shift = match (tracker.last_fine_x, fine_x) {
+        (Some(last), Some(now)) => {
+            let moved = (now - last).rem_euclid(8);
+            if moved >= 4 {
+                moved - 8
+            } else {
+                moved
+            }
+        }
+        _ => 0,
+    };
+    tracker.last_fine_x = fine_x;
+    shift
+}
+
+/// Xnes3D+: finds the main character, the sprite that keeps moving the way the D-pad is
+/// pressed, and brings it a little forward for this frame, with the sprites touching it (a
+/// character is often drawn in several pieces). The movement is measured against the
+/// background, so a character the game keeps in the middle of a scrolling screen still counts.
+pub(crate) fn raise_main_character(frame: &mut ConversionFrame) {
+    if !enabled() {
+        return;
+    }
+    let Ok(mut tracker) = TRACKER.lock() else {
+        return;
+    };
+    let pad = PAD.load(Ordering::Relaxed);
+    let direction: f32 = match (pad & PAD_LEFT != 0, pad & PAD_RIGHT != 0) {
+        (true, false) => -1.0,
+        (false, true) => 1.0,
+        _ => 0.0,
+    };
+    #[allow(clippy::cast_precision_loss)] // a few pixels
+    let shift = background_shift(&mut tracker, frame) as f32;
+    let sprites = front_sprites(frame);
+
+    // Follow each sprite from the last frame: the nearest followed one not taken yet.
+    for followed in &mut tracker.followed {
+        followed.seen = false;
+    }
+    let mut owners: Vec<Option<usize>> = Vec::with_capacity(sprites.len());
+    for (_, area) in &sprites {
+        let x = (area[0] + area[2]) / 2.0;
+        let y = (area[1] + area[3]) / 2.0;
+        let nearest = tracker
+            .followed
+            .iter()
+            .enumerate()
+            .filter(|(_, followed)| !followed.seen)
+            .map(|(index, followed)| (index, (followed.x - x).hypot(followed.y - y)))
+            .filter(|(_, distance)| *distance <= FOLLOW_DISTANCE)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(index, _)| index);
+        let index = if let Some(index) = nearest {
+            let followed = &mut tracker.followed[index];
+            if direction != 0.0 {
+                // How the sprite moved in the level: on screen, minus what the scrolling did.
+                let moved = (x - followed.x) - shift;
+                if moved * direction > 0.0 {
+                    followed.score = (followed.score + 1.0).min(MAX_SCORE);
+                } else if moved * direction < 0.0 {
+                    followed.score = (followed.score - 1.0).max(0.0);
+                }
+            }
+            followed.x = x;
+            followed.y = y;
+            followed.missing = 0;
+            followed.seen = true;
+            index
+        } else {
+            tracker.followed.push(Followed {
+                x,
+                y,
+                score: 0.0,
+                missing: 0,
+                seen: true,
+            });
+            tracker.followed.len() - 1
+        };
+        owners.push(Some(index));
+    }
+
+    // Sprites gone for too long are dropped, and the indices moved to match.
+    let main_before = tracker.main;
+    let mut kept: Vec<Option<usize>> = Vec::with_capacity(tracker.followed.len());
+    let mut next = 0;
+    for followed in &mut tracker.followed {
+        if !followed.seen {
+            followed.missing = followed.missing.saturating_add(1);
+        }
+        if followed.missing > MISSING_FRAMES {
+            kept.push(None);
+        } else {
+            kept.push(Some(next));
+            next += 1;
+        }
+    }
+    tracker.followed.retain(|followed| followed.missing <= MISSING_FRAMES);
+    let renumber = |index: Option<usize>| index.and_then(|index| kept.get(index).copied().flatten());
+    let owners: Vec<Option<usize>> = owners.into_iter().map(renumber).collect();
+    let mut main = renumber(main_before);
+
+    // The best scorer becomes the main character, once it scores enough and clearly beats the
+    // one there now.
+    let best = tracker
+        .followed
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
+        .map(|(index, followed)| (index, followed.score));
+    if let Some((index, score)) = best {
+        let current = main.and_then(|main| tracker.followed.get(main)).map_or(0.0, |f| f.score);
+        if score >= MAIN_SCORE && (main.is_none() || score > current + SWITCH_MARGIN) {
+            main = Some(index);
+        }
+    }
+    if main.and_then(|main| tracker.followed.get(main)).is_some_and(|f| f.score < MAIN_SCORE / 2.0) {
+        main = None;
+    }
+    tracker.main = main;
+    let Some(main) = main else {
+        return;
+    };
+
+    // The main character's box this frame, grown by one pixel so touching pieces join it.
+    let Some(area) = sprites
+        .iter()
+        .zip(&owners)
+        .filter(|(_, owner)| **owner == Some(main))
+        .map(|((_, area), _)| *area)
+        .next()
+    else {
+        return;
+    };
+    let grown = [area[0] - 1.0, area[1] - 1.0, area[2] + 1.0, area[3] + 1.0];
+    let raised: Vec<ShapeId> = sprites
+        .iter()
+        .filter(|(_, other)| {
+            other[0] <= grown[2] && other[2] >= grown[0] && other[1] <= grown[3] && other[3] >= grown[1]
+        })
+        .map(|(shape, _)| *shape)
+        .collect();
+    drop(tracker);
+
+    let instances: Vec<_> = frame
+        .instances()
+        .iter()
+        .copied()
+        .filter(|&id| raised.contains(&frame.instance(id).shape()))
+        .collect();
+    for id in instances {
+        frame.instance_mut(id).offset.z -= MAIN_CHARACTER_RAISE;
     }
 }

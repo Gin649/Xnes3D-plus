@@ -101,8 +101,8 @@ const fn hint(button: &'static str, meaning: &'static str) -> Hint {
 
 const HOME_HINTS: &[Hint] = &[
     hint("A", keys::HANDHELD_HINT_PLAY),
-    hint("X", keys::HANDHELD_HINT_PROFILE),
-    hint("Y", keys::HANDHELD_HINT_OPTIONS),
+    hint("X", keys::HANDHELD_HINT_OPTIONS),
+    hint("Y", keys::HANDHELD_HINT_PROFILE),
     hint("Select", keys::HANDHELD_HINT_GAME_OPTIONS),
     // AMD-053 REQ-UI-210: the one free button of the home screen marks a favourite.
     hint("L2", keys::HANDHELD_HINT_FAVORITE),
