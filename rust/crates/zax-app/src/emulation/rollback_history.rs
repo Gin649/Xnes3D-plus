@@ -16,7 +16,7 @@ use zax_render::numerics::Vector3;
 use zax_scripting::persistent::BLOCK_SIZE;
 
 /// Highest number of snapshots kept (REQ-LOOP-030).
-/// Zaxnes Plus: 90 (a minute and a half of rewind) rather than 30.
+/// Xnes3D+: 90 (a minute and a half of rewind) rather than 30.
 pub const CAPACITY: usize = 90;
 /// A snapshot is taken on every frame counter that is a multiple of 60.
 pub const INTERVAL_FRAMES: i64 = 60;

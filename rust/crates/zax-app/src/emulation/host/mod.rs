@@ -50,7 +50,7 @@ use crate::persistence::app_settings::AppSettings;
 use crate::persistence::battery_ram_store::BatteryRamStore;
 use crate::persistence::save_slots::{self, SaveSlotIndex};
 
-/// Zaxnes Plus: the numbered slot that holds a game's auto save (written when the game is left,
+/// Xnes3D+: the numbered slot that holds a game's auto save (written when the game is left,
 /// loaded when it starts again). The last of the 36, out of the 15 the save button goes round.
 pub const AUTO_SAVE_SLOT: i32 = 36;
 use crate::persistence::settings_store::SettingsStore;
@@ -1816,7 +1816,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
     /// hooks run and the scene is emptied. With `clear_current_game` the game is forgotten and
     /// the state goes to Stopped; with `dispose_session` the session is dropped.
     fn stop_current_game(&mut self, clear_current_game: bool, dispose_session: bool) {
-        // Zaxnes Plus: in the console interface, leaving a game writes its auto save, as
+        // Xnes3D+: in the console interface, leaving a game writes its auto save, as
         // RetroArch does; the next start of the game loads it (`Running::auto_load_state`).
         if clear_current_game && self.console_interface && self.state != EmulationState::Stopped {
             let auto = save_slots::numbered_slot_id(AUTO_SAVE_SLOT);

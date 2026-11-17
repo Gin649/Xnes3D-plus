@@ -1,4 +1,4 @@
-//! Smart 3D (Zaxnes Plus): the settings a pattern learned with no profile gets from its shape,
+//! Smart 3D (Xnes3D+): the settings a pattern learned with no profile gets from its shape,
 //! instead of the same ones for every shape (SPEC-04 §4.3: 3 voxels deep, layer L1).
 //!
 //! It only acts while a game plays with the "3D by default" entry (no profile): a profile's own
@@ -76,7 +76,7 @@ const STATUS_BAR_BOTTOM_BAND: i32 = 176;
 /// The 3D settings of each kind.
 pub fn apply(kind: Kind, instance: &mut PatternInstance) {
     let (depth, layer) = match kind {
-        // Zaxnes Plus, second tuning (owner request: stand out more): characters about twice as
+        // Xnes3D+, second tuning (owner request: stand out more): characters about twice as
         // thick, solid scenery half as thick again, the backdrop one layer further back.
         Kind::Sprite => (12, ZLayer::L1),
         Kind::SpriteBehind => (4, ZLayer::L2),

@@ -330,7 +330,7 @@ impl ImguiFrontend {
         self.console = ConsoleMode { active, automatic };
     }
 
-    /// Zaxnes Plus: reads the ROM folder again and the profile of each game (new profiles were
+    /// Xnes3D+: reads the ROM folder again and the profile of each game (new profiles were
     /// imported).
     pub fn refresh_roms(&mut self, host: &AppHost) {
         if let Some(handheld) = &mut self.handheld {

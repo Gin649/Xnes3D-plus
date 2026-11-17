@@ -162,7 +162,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         // A profile that has since been removed falls back to the chooser rather than to an
         // error, which is also what REQ-UI-201 describes for a file never started.
         // A launcher's game whose remembered choice is "3D by default" (Smart 3D, given when it
-        // had no profile) is matched again, so a profile added since is used (Zaxnes Plus).
+        // had no profile) is matched again, so a profile added since is used (Xnes3D+).
         let automatic = self.games.default_three_dimensional_id();
         let chosen = self
             .settings_store
@@ -423,7 +423,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         // in the cache and then in the ROM **before** its patterns are built, so that the first
         // converted frame already has them. Nothing happens for a 3dn profile.
         let game = &self.prepare_hash_tiles(game, rom_image);
-        // Zaxnes Plus: a game with no profile ("3D by default") plays in Smart 3D.
+        // Xnes3D+: a game with no profile ("3D by default") plays in Smart 3D.
         zax_engine3d::smart3d::set_enabled(game.is_default_three_dimensional);
         let request = SessionRequest {
             profile: &game.profile,

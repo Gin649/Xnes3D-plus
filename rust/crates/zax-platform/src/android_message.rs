@@ -1,4 +1,4 @@
-//! Zaxnes Plus: a message from the native side to the Android activity
+//! Xnes3D+: a message from the native side to the Android activity
 //! (`SDL_AndroidSendMessage`, which reaches `SDLActivity.onUnhandledMessage` on the Java side).
 
 /// SDL's user messages start here (lower numbers are SDL's own commands).

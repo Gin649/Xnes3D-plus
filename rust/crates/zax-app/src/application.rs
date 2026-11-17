@@ -251,7 +251,7 @@ struct Running {
     /// The save state slot `-slot=<n>` (AMD-053 REQ-UI-213) or `--load-state` asks for, until the
     /// game accepts the load: `"1"` to `"36"` or `"quick"`.
     pending_state_load: Option<String>,
-    /// Zaxnes Plus: the game whose auto save was already looked for since it started.
+    /// Xnes3D+: the game whose auto save was already looked for since it started.
     auto_loaded_for: Option<String>,
     /// When the audio counters were last written to the log.
     audio_logged_at: Instant,
@@ -992,7 +992,7 @@ impl Running {
         self.host.enqueue(Command::OpenRom, CommandArgs::of_text(rom));
     }
 
-    /// Zaxnes Plus: what the Android side answered to a row of the menus (see
+    /// Xnes3D+: what the Android side answered to a row of the menus (see
     /// [`crate::android_bridge`]): a new ROM folder, or new profiles to import. Checked about
     /// twice a second, like the launch request.
     fn take_android_answers(&mut self) {
@@ -1044,7 +1044,7 @@ impl Running {
         }
     }
 
-    /// Zaxnes Plus: in the console interface, a game that starts loads its auto save (the state
+    /// Xnes3D+: in the console interface, a game that starts loads its auto save (the state
     /// written when it was last left, see `EmulationHost::stop_current_game`), as RetroArch does.
     /// Once per start, after the game is running; a state asked on the command line comes first.
     fn auto_load_state(&mut self) {
@@ -1926,7 +1926,7 @@ fn resolve_user_data(options: &AppOptions) -> UserDataPaths {
     paths
 }
 
-/// Zaxnes Plus: the battery saves go to `<folder>/saves` and the save states to
+/// Xnes3D+: the battery saves go to `<folder>/saves` and the save states to
 /// `<folder>/states`, a folder the player chose (on Android, one outside the app's hidden
 /// folder). What the user data held is copied there once, file by file, never over a file
 /// already there; the old copies are left where they were. A folder that can't be written to

@@ -14,7 +14,7 @@ use crate::persistence::save_slots::{self, is_valid_slot_id, SaveSlotIndex, QUIC
 use crate::persistence::save_state_file::{self, SaveStateContent, SaveStateHeader};
 use crate::user_data_paths::{remove_file_if_present, rom_file_stem, write_atomic};
 
-/// Zaxnes Plus: how many numbered slots the console's save button goes round.
+/// Xnes3D+: how many numbered slots the console's save button goes round.
 pub const ROTATING_SLOTS: i32 = 15;
 
 impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
@@ -214,7 +214,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         Ok(())
     }
 
-    /// Zaxnes Plus: the slot the console's save button writes next, among the first
+    /// Xnes3D+: the slot the console's save button writes next, among the first
     /// [`ROTATING_SLOTS`]: the first empty one, else the one after the newest, round to 1 after
     /// the last, so the oldest is the one replaced (RetroArch's auto-increment).
     fn next_rotating_slot(&self) -> i32 {
@@ -232,7 +232,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         newest.map_or(1, |(_, number)| number % ROTATING_SLOTS + 1)
     }
 
-    /// Zaxnes Plus: the newest state among the first [`ROTATING_SLOTS`], if any.
+    /// Xnes3D+: the newest state among the first [`ROTATING_SLOTS`], if any.
     fn newest_rotating_slot(&self) -> Option<i32> {
         (1..=ROTATING_SLOTS)
             .filter_map(|number| {
@@ -247,7 +247,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
 
     /// The quick save (REQ-LOOP-043): the quick slot, no thumbnail, and its notification.
     ///
-    /// Zaxnes Plus: in the console interface (Android, handhelds) the save button writes the
+    /// Xnes3D+: in the console interface (Android, handhelds) the save button writes the
     /// next of 15 numbered slots in turn, with its picture, as RetroArch does.
     pub fn quick_save(&mut self) {
         if self.current_game.is_none() || self.state == EmulationState::Stopped {
@@ -272,7 +272,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
 
     /// The quick load (REQ-LOOP-045): loads the quick slot, with its notification.
     pub fn quick_load(&mut self) {
-        // Zaxnes Plus: the console's load button loads the newest of the 15 states.
+        // Xnes3D+: the console's load button loads the newest of the 15 states.
         if self.console_interface {
             let Some(number) = self.newest_rotating_slot() else {
                 self.notifications

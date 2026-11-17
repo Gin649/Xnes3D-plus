@@ -1,4 +1,4 @@
-//! Zaxnes Plus: what the emulator's own menus ask of the Android side, for the things only
+//! Xnes3D+: what the emulator's own menus ask of the Android side, for the things only
 //! Android can do (its folder and file pickers, downloads, the storage permission).
 //!
 //! A menu row sends a message through SDL (`SDL_AndroidSendMessage`), which reaches

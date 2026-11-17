@@ -246,7 +246,7 @@ pub struct AppOptions {
     /// The folder the handheld ROM list shows (Rust-only); `None` for the `roms` folder of the
     /// user data.
     pub roms_directory: Option<String>,
-    /// Zaxnes Plus: the folder the battery saves and the save states go to (`--saves`); `None`
+    /// Xnes3D+: the folder the battery saves and the save states go to (`--saves`); `None`
     /// for those of the user data.
     pub saves_directory: Option<String>,
     /// How far the frame clock catches up (Rust-only); `None` for the platform default.

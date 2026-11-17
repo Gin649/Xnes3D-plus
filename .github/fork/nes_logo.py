@@ -1,4 +1,4 @@
-"""Draws the Zaxnes Plus logo (README) and app icon in an NES look: pixel letters, console grey,
+"""Draws the Xnes3D+ logo (README) and app icon in an NES look: pixel letters, console grey,
 black band and red stripe. Run from the repository root."""
 import subprocess, sys
 from pathlib import Path
@@ -13,6 +13,8 @@ FONT = {  # 5 x 7 pixel letters
  'P': ["11110","10001","10001","11110","10000","10000","10000"],
  'L': ["10000","10000","10000","10000","10000","10000","11111"],
  'U': ["10001","10001","10001","10001","10001","10001","01110"],
+ 'D': ["11110","10001","10001","10001","10001","10001","11110"],
+ '3': ["11110","00001","00001","01110","00001","00001","11110"],
  '+': ["00000","00100","00100","11111","00100","00100","00000"],
  ' ': ["000","000","000","000","000","000","000"],
 }
@@ -39,15 +41,15 @@ def width(text, px, gap=1):
 
 def logo():
     px = 8
-    w1, w2 = width("ZAXNES", px), width("PLUS", px)
+    w1, w2 = width("XNES3D", px), width("+", px)
     pad = 28
-    W = pad * 2 + w1 + px * 3 + w2
+    W = pad * 2 + w1 + px * 2 + w2
     H = 7 * px + pad * 2 + 24
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" shape-rendering="crispEdges">',
              f'<rect x="0" y="0" width="{W}" height="{H}" rx="10" fill="{BLACK}"/>',
              f'<rect x="0" y="{H-18}" width="{W}" height="6" fill="{RED}"/>']
-    a, x = word("ZAXNES", pad, pad, px, LIGHT, shadow=DARK)
-    b, _ = word("PLUS", x + px * 2, pad, px, RED, shadow="#6E0D15")
+    a, x = word("XNES3D", pad, pad, px, LIGHT, shadow=DARK)
+    b, _ = word("+", x + px, pad, px, RED, shadow="#6E0D15")
     parts += a + b + ['</svg>']
     return "\n".join(parts)
 
@@ -64,16 +66,16 @@ def icon():
     total = 5 * px * 2 + px
     left = (S - total) / 2
     top = 86 + (S - 86 - 7 * px) / 2
-    z, x = word("Z", left, top, px, BLACK, shadow="#8E8E8B")
+    z, x = word("X", left, top, px, BLACK, shadow="#8E8E8B")
     plus, _ = word("+", x, top, px, RED, shadow="#7A0E18", gap=0)
     parts += z + plus + ['</svg>']
     return "\n".join(parts)
 
 root = Path(sys.argv[1])
-(root / ".github/zaxnes-plus-logo.svg").write_text(logo())
+(root / ".github/xnes3d-logo.svg").write_text(logo())
 (root / ".github/fork/icon.svg").write_text(icon())
 for folder, size in {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}.items():
     out = root / f".github/fork/res/mipmap-{folder}/ic_launcher.png"
     subprocess.run(["rsvg-convert", "-w", str(size), "-h", str(size), "-o", str(out), str(root / ".github/fork/icon.svg")], check=True)
-subprocess.run(["rsvg-convert", "-o", "/tmp/logo.png", str(root / ".github/zaxnes-plus-logo.svg")], check=True)
+subprocess.run(["rsvg-convert", "-o", "/tmp/logo.png", str(root / ".github/xnes3d-logo.svg")], check=True)
 subprocess.run(["rsvg-convert", "-w", "192", "-o", "/tmp/icon.png", str(root / ".github/fork/icon.svg")], check=True)

@@ -35,9 +35,9 @@ pub enum PadButton {
     L2,
     /// The right trigger, pressed past half way.
     R2,
-    /// Zaxnes Plus: the left stick pressed in.
+    /// Xnes3D+: the left stick pressed in.
     L3,
-    /// Zaxnes Plus: the right stick pressed in.
+    /// Xnes3D+: the right stick pressed in.
     R3,
 }
 

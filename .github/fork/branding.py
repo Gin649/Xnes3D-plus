@@ -1,7 +1,7 @@
-"""Zaxnes Plus branding, applied at build time (Android APK workflow) so nixxou's files stay as
+"""Xnes3D+ branding, applied at build time (Android APK workflow) so nixxou's files stay as
 they are in the repository and the weekly catch-up merges cleanly.
 
-- the app id and names: io.github.gin649.zaxnes, "Zaxnes Plus", "Zaxnes Plus profiles"
+- the app id and names: io.github.gin649.zaxnes, "Xnes3D+", "Xnes3D+ profiles"
 - the launcher icon (.github/fork/res, the voxel plus of the logo), compiled by the workflow and
   linked by build/package-android.py through ZAXNES_EXTRA_RES
 - the colours of the handheld interface (the one Android uses): the NES look, charcoal, black
@@ -30,8 +30,8 @@ def replace(path, old, new, count=1):
 # App id, names, icon
 manifest = RUST / 'build' / 'android' / 'AndroidManifest.xml'
 replace(manifest, 'package="io.github.nixxou.zaxnes"', 'package="io.github.gin649.zaxnes"')
-replace(manifest, 'android:label="Zaxnes"', 'android:label="Zaxnes Plus"', count=2)
-replace(manifest, 'android:label="Zaxnes profiles"', 'android:label="Zaxnes Plus profiles"')
+replace(manifest, 'android:label="Zaxnes"', 'android:label="Xnes3D+"', count=2)
+replace(manifest, 'android:label="Zaxnes profiles"', 'android:label="Xnes3D+ profiles"')
 replace(manifest, '<application', '<application\n        android:icon="@mipmap/ic_launcher"')
 
 # The packaging links the compiled icon (ZAXNES_EXTRA_RES) with the manifest
@@ -64,4 +64,4 @@ for name, value in palette.items():
     text = pattern.sub(f'const {name}: [f32; 4] = {value};', text, count=1)
 draw.write_text(text, encoding='utf-8')
 
-print('Zaxnes Plus branding applied.')
+print('Xnes3D+ branding applied.')

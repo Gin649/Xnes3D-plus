@@ -1,6 +1,6 @@
 name: UI preview
 
-# Zaxnes Plus: pictures of the console interface (the one Android uses) as the APK will show it,
+# Xnes3D+: pictures of the console interface (the one Android uses) as the APK will show it,
 # with the fork's colours, font and rows, so a change can be looked at before an APK is built.
 # Builds the desktop program on Linux (a debug build: it only draws menus), runs it in its
 # handheld mode with --ui-shots under a virtual display, and publishes the pictures as the
@@ -35,7 +35,7 @@ jobs:
             rust/target
           key: ui-shots-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: Zaxnes Plus branding and the interface font
+      - name: Xnes3D+ branding and the interface font
         run: |
           python3 .github/fork/branding.py
           curl -fsSL -o "$RUNNER_TEMP/PixelifySans.ttf" \
@@ -70,5 +70,5 @@ jobs:
         run: |
           gh release delete ui-preview --yes --cleanup-tag 2>/dev/null || true
           gh release create ui-preview "$RUNNER_TEMP"/shots/*.png --prerelease \
-            --target "${{ github.sha }}" --title "Zaxnes Plus interface preview" \
+            --target "${{ github.sha }}" --title "Xnes3D+ interface preview" \
             --notes "Pictures of the console interface at ${{ github.sha }}, made by the UI preview workflow."

@@ -136,7 +136,7 @@ pub struct HandheldUi {
     metrics: Metrics,
     heading_font: Option<imgui::FontId>,
     effects: Vec<UiEffect>,
-    /// Zaxnes Plus: both sticks held in this frame (the in-game menu combination).
+    /// Xnes3D+: both sticks held in this frame (the in-game menu combination).
     pad_l3_r3: bool,
     camera_memory: CameraMemory,
     /// How long Y has been held in game, while it is, and whether the hold already acted.
@@ -464,7 +464,7 @@ impl HandheldUi {
                     .as_deref()
                     .map(|path| RomEntry::new(PathBuf::from(path)));
                 if let Some(entry) = entry {
-                    // Zaxnes Plus: a game a launcher started never stops on the chooser. It plays
+                    // Xnes3D+: a game a launcher started never stops on the chooser. It plays
                     // with the profile that carries its name, or else in Smart 3D.
                     if crate::launch_origin::from_frontend() {
                         self.library = ProfileChooserModel::new(host.games().library())
@@ -658,7 +658,7 @@ impl HandheldUi {
 
     /// L2 in game: a hold keeps the camera, a short press puts it back.
     ///
-    /// Zaxnes Plus: L2 rewinds on Android (the gamepad's default bindings), so the camera
+    /// Xnes3D+: L2 rewinds on Android (the gamepad's default bindings), so the camera
     /// memory is not on it there.
     fn update_camera_memory(&mut self, pad: &PadState, seconds: f32, host: &mut AppHost) {
         let memory = &mut self.camera_memory;
@@ -834,7 +834,7 @@ impl HandheldUi {
             self.toggle_overlay(frame.host);
             return;
         }
-        // Zaxnes Plus: L3 and R3 together (both sticks pressed in) open the in-game menu.
+        // Xnes3D+: L3 and R3 together (both sticks pressed in) open the in-game menu.
         if matches!(button, PadButton::L3 | PadButton::R3) && self.screen == Screen::InGame {
             if self.pad_l3_r3 {
                 self.toggle_overlay(frame.host);
@@ -842,7 +842,7 @@ impl HandheldUi {
             return;
         }
         match self.screen {
-            // Zaxnes Plus: with no game listed, A picks the ROM folder (Android).
+            // Xnes3D+: with no game listed, A picks the ROM folder (Android).
             Screen::Home
                 if button == PadButton::A
                     && self.roms.entries().is_empty()
@@ -935,7 +935,7 @@ impl HandheldUi {
                     .find(|entry| entry.path == path)
                     .and_then(|entry| entry.profile.as_ref())
                     .map(|profile| profile.id.clone())
-                    // Zaxnes Plus: a game with no profile plays in Smart 3D ("3D by default").
+                    // Xnes3D+: a game with no profile plays in Smart 3D ("3D by default").
                     .or_else(|| host.games().default_three_dimensional_id())
                     .or_else(|| host.games().two_dimensional_mode_id());
                 let rom = path.to_string_lossy();
@@ -1228,7 +1228,7 @@ impl HandheldUi {
         }
     }
 
-    /// Zaxnes Plus: hands `action` to the Android side, which answers through the user data
+    /// Xnes3D+: hands `action` to the Android side, which answers through the user data
     /// folder (see [`crate::android_bridge`]).
     fn ask_android(&mut self, action: crate::android_bridge::AndroidAction) {
         if !crate::android_bridge::ask(action) {

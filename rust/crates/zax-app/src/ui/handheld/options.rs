@@ -77,7 +77,7 @@ pub enum OptionRow {
     /// The graphics API of the shaders page: OpenGL draws none, Vulkan draws them (owner
     /// decision: the slang shaders are offered on Vulkan only). Applied at the next start.
     ShaderBackend,
-    /// Zaxnes Plus: a row the Android side carries out (a folder or file picker, a download).
+    /// Xnes3D+: a row the Android side carries out (a folder or file picker, a download).
     Android(crate::android_bridge::AndroidAction),
     /// A row that climbs to another page of the tree (RO-3).
     Page(OptionsPage),
@@ -124,7 +124,7 @@ pub enum OptionsPage {
     Audio,
     /// The slang shaders of the four slots (owner request, the desktop's Shaders window).
     Shaders,
-    /// Zaxnes Plus (Android): the ROM folder and the 3D profiles.
+    /// Xnes3D+ (Android): the ROM folder and the 3D profiles.
     Library,
 }
 
@@ -214,7 +214,7 @@ pub const ROWS: [OptionRow; 13] = [
 /// The rows of the main page where the touch pad is offered (Android): its row after the
 /// controls, which is where it was before RO-3.
 ///
-/// Zaxnes Plus: the games and profiles page first, then RetroAchievements and the controls, the
+/// Xnes3D+: the games and profiles page first, then RetroAchievements and the controls, the
 /// rows most players look for; the picture and performance rows after them.
 pub const TOUCH_ROWS: [OptionRow; 15] = [
     OptionRow::Page(OptionsPage::Library),
@@ -234,11 +234,11 @@ pub const TOUCH_ROWS: [OptionRow; 15] = [
     OptionRow::Profiler,
 ];
 
-/// Zaxnes Plus: the title of the games and profiles page (English only, like the rest of the
+/// Xnes3D+: the title of the games and profiles page (English only, like the rest of the
 /// fork's rows).
 pub const LIBRARY_TITLE: &str = "Games and 3D profiles";
 
-/// Zaxnes Plus: the rows of the games and profiles page, each carried out by Android.
+/// Xnes3D+: the rows of the games and profiles page, each carried out by Android.
 pub const LIBRARY_ROWS: [OptionRow; 8] = [
     OptionRow::Group("Games"),
     OptionRow::Android(AndroidAction::ChooseRomFolder),
@@ -250,7 +250,7 @@ pub const LIBRARY_ROWS: [OptionRow; 8] = [
     OptionRow::Android(AndroidAction::CopyProfiles),
 ];
 
-/// Zaxnes Plus: the label of an Android row.
+/// Xnes3D+: the label of an Android row.
 fn android_label(action: AndroidAction) -> String {
     match action {
         AndroidAction::ChooseRomFolder => "ROM folder",
@@ -263,7 +263,7 @@ fn android_label(action: AndroidAction) -> String {
     .to_owned()
 }
 
-/// Zaxnes Plus: what an Android row shows on its right. The ROM folder shows the name of the
+/// Xnes3D+: what an Android row shows on its right. The ROM folder shows the name of the
 /// folder chosen; the others how they open.
 fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
     match action {
@@ -510,7 +510,7 @@ pub enum OptionsCommand {
     OpenAchievements,
     /// Step the camera preset.
     StepCamera(i32),
-    /// Zaxnes Plus: ask Android for this.
+    /// Xnes3D+: ask Android for this.
     Android(AndroidAction),
 }
 
@@ -582,7 +582,7 @@ impl HandheldOptionsModel {
     /// The rows of the main page: the Android one where a touch screen is offered.
     #[must_use]
     pub fn main_rows() -> &'static [OptionRow] {
-        // Zaxnes Plus: the Android rows come with the touch ones.
+        // Xnes3D+: the Android rows come with the touch ones.
         if zax_platform::input::touch::offered() || crate::android_bridge::available() {
             &TOUCH_ROWS
         } else {

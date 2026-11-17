@@ -23,7 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The Android half of the rows of Options > Games and 3D profiles. Zaxnes Plus has one icon: its
+ * The Android half of the rows of Options > Games and 3D profiles. Xnes3D+ has one icon: its
  * own menus send a message (zax-app's android_bridge.rs), ZaxnesActivity opens this screen with
  * the action asked, and this screen runs the picker or the download, then closes. It also takes
  * .3dn and .bundle files opened or shared from a file manager.
@@ -96,7 +96,7 @@ public class ProfilesActivity extends Activity {
                 openRomFolderPicker();
             } else {
                 showResult("No access to your files",
-                    "Without \"All files access\", Zaxnes Plus can't read your ROM folder. "
+                    "Without \"All files access\", Xnes3D+ can't read your ROM folder. "
                         + "You can try again from Options > Games and 3D profiles.");
             }
         }
@@ -132,8 +132,8 @@ public class ProfilesActivity extends Activity {
         dialog()
             .setTitle("Allow access to your games")
             .setMessage("To list the games in your own ROM folder, without copying them anywhere, "
-                + "Zaxnes Plus needs \"All files access\". It only reads the folder you choose next.\n\n"
-                + "Turn it on for Zaxnes Plus on the next screen, then come back.")
+                + "Xnes3D+ needs \"All files access\". It only reads the folder you choose next.\n\n"
+                + "Turn it on for Xnes3D+ on the next screen, then come back.")
             .setPositiveButton("Continue", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface d, int w) {
@@ -146,8 +146,8 @@ public class ProfilesActivity extends Activity {
                             startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
                         } catch (Exception again) {
                             waitingForAllFiles = false;
-                            showResult("Can't open the setting", "Allow \"All files access\" for Zaxnes Plus "
-                                + "in Android's settings (Apps > Zaxnes Plus), then try again.");
+                            showResult("Can't open the setting", "Allow \"All files access\" for Xnes3D+ "
+                                + "in Android's settings (Apps > Xnes3D+), then try again.");
                         }
                     }
                 }
@@ -164,7 +164,7 @@ public class ProfilesActivity extends Activity {
         if (canReadStorage()) {
             openRomFolderPicker();
         } else {
-            showResult("No access to your files", "Without it, Zaxnes Plus can't read your ROM folder.");
+            showResult("No access to your files", "Without it, Xnes3D+ can't read your ROM folder.");
         }
     }
 
@@ -253,7 +253,7 @@ public class ProfilesActivity extends Activity {
         final File copy = new File(new File(getCacheDir(), "import-3dsen"), ProfileFolder.safe(name));
         final File profiles = inbox();
         if (profiles == null) {
-            showResult("Import failed", "Zaxnes Plus' storage isn't available right now.");
+            showResult("Import failed", "Xnes3D+'s storage isn't available right now.");
             return;
         }
         final AlertDialog working = dialog()
@@ -317,7 +317,7 @@ public class ProfilesActivity extends Activity {
     private void getCommunityProfiles() {
         final File profiles = inbox();
         if (profiles == null) {
-            showResult("Couldn't get community profiles", "Zaxnes Plus' storage isn't available right now.");
+            showResult("Couldn't get community profiles", "Xnes3D+'s storage isn't available right now.");
             return;
         }
         final AlertDialog working = dialog()
@@ -359,7 +359,7 @@ public class ProfilesActivity extends Activity {
         String now = tree == null ? "No folder chosen yet." : "Now: " + folderName(tree) + ".";
         dialog()
             .setTitle("Profiles folder")
-            .setMessage("Choose a folder of .3dn profiles, say on your SD card. Zaxnes Plus copies new "
+            .setMessage("Choose a folder of .3dn profiles, say on your SD card. Xnes3D+ copies new "
                 + "and changed profiles from it each time it starts.\n\n" + now)
             .setPositiveButton("Choose folder", new DialogInterface.OnClickListener() {
                 @Override
@@ -409,11 +409,11 @@ public class ProfilesActivity extends Activity {
             String path = pathOf(picked);
             File folder = path == null ? null : new File(path);
             if (folder == null || !folder.isDirectory() || !folder.canWrite()) {
-                showResult("That folder can't be used", "Choose a folder Zaxnes Plus can write to, on the internal storage or an SD card.");
+                showResult("That folder can't be used", "Choose a folder Xnes3D+ can write to, on the internal storage or an SD card.");
             } else {
                 getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SAVES, path).apply();
                 showResult("Saves folder set", "Your saves and save states go to " + folderName(picked)
-                    + " (in its saves and states folders) from the next time Zaxnes Plus starts. "
+                    + " (in its saves and states folders) from the next time Xnes3D+ starts. "
                     + "The ones you have now are copied there then.");
             }
         } else if (requestCode == PICK_ROM_FOLDER) {
@@ -421,7 +421,7 @@ public class ProfilesActivity extends Activity {
             if (path == null || !new File(path).isDirectory()) {
                 showResult("That folder can't be used", "Choose a folder on the internal storage or an SD card.");
             } else if (!sendRomFolder(path)) {
-                showResult("ROM folder not saved", "Zaxnes Plus' storage isn't available right now.");
+                showResult("ROM folder not saved", "Xnes3D+'s storage isn't available right now.");
             } else {
                 Toast.makeText(this, "ROM folder: " + folderName(picked), Toast.LENGTH_LONG).show();
                 finish();
@@ -515,7 +515,7 @@ public class ProfilesActivity extends Activity {
 
     private void toast(int copied) {
         String text = copied == 0 ? "No new profiles to copy."
-            : copied == 1 ? "1 profile added to Zaxnes Plus." : copied + " profiles added to Zaxnes Plus.";
+            : copied == 1 ? "1 profile added to Xnes3D+." : copied + " profiles added to Xnes3D+.";
         Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 

@@ -1,7 +1,7 @@
 name: Catch up with Zaxnes
 
 # Once a week, brings in what is new in the official Zaxnes (nixxou/zaxnes) and builds a new
-# Zaxnes Plus from it. If an update clashes with the Zaxnes Plus changes, nothing is merged and
+# Xnes3D+ from it. If an update clashes with the Xnes3D+ changes, nothing is merged and
 # this run fails, saying so, for the clash to be sorted out by hand.
 on:
   schedule:
@@ -37,11 +37,11 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             git merge --abort
-            echo "::error::The official Zaxnes changed the same lines as Zaxnes Plus; nothing was merged. Ask Claude to bring it in by hand."
+            echo "::error::The official Zaxnes changed the same lines as Xnes3D+; nothing was merged. Ask Claude to bring it in by hand."
             exit 1
           fi
 
-      - name: Build the new Zaxnes Plus
+      - name: Build the new Xnes3D+
         if: steps.merge.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}

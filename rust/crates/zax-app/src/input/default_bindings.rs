@@ -257,7 +257,7 @@ pub fn create_handheld_gamepad(standard: bool) -> BindingSet {
     set
 }
 
-/// The gamepad set the Android package had before Zaxnes Plus changed it: what a pad saved then
+/// The gamepad set the Android package had before Xnes3D+ changed it: what a pad saved then
 /// still has, so it moves to the new one ([`create_android_gamepad`]).
 #[must_use]
 pub fn create_former_android_gamepad(standard: bool) -> BindingSet {
@@ -271,7 +271,7 @@ pub fn create_former_android_gamepad(standard: bool) -> BindingSet {
     set
 }
 
-/// The gamepad set of the Android package. Zaxnes Plus: the handheld defaults, with the
+/// The gamepad set of the Android package. Xnes3D+: the handheld defaults, with the
 /// shoulders and the left trigger as RetroArch players expect them: L2 rewinds (held), R2 fast
 /// forwards, R1 saves a state and L1 loads the newest one. Zoom stays on a pinch of the screen,
 /// and both sticks pressed in open the menu (the handheld interface, not a binding).

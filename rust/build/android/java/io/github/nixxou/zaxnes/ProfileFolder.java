@@ -13,7 +13,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * A folder of 3D profiles the player picks once (Zaxnes Plus profiles, ProfilesActivity), say on
+ * A folder of 3D profiles the player picks once (Xnes3D+ profiles, ProfilesActivity), say on
  * the SD card. Android hides the app's own folder from file managers, so profiles are put in that
  * folder instead and copied into Zaxnes' profiles each time it starts: new ones, and ones that
  * changed (another size or a newer date). Nothing is ever deleted from either side.
@@ -48,7 +48,7 @@ final class ProfileFolder {
     }
 
     /**
-     * Where profiles go while Zaxnes Plus runs: the native side checks this folder about twice a
+     * Where profiles go while Xnes3D+ runs: the native side checks this folder about twice a
      * second, imports what is in it and empties it. Must match PROFILE_INBOX in zax-app's
      * android_bridge.rs.
      */
@@ -115,7 +115,7 @@ final class ProfileFolder {
         return name != null && name.toLowerCase(java.util.Locale.ROOT).endsWith(BUNDLE_EXTENSION);
     }
 
-    /** Copies one profile that was opened or shared with Zaxnes Plus into {@code to}. */
+    /** Copies one profile that was opened or shared with Xnes3D+ into {@code to}. */
     static boolean importOne(Context c, Uri uri, String name, File to) {
         if (to == null || name == null || !name.toLowerCase(java.util.Locale.ROOT).endsWith(EXTENSION)) return false;
         to.mkdirs();

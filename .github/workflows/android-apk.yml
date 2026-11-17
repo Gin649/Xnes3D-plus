@@ -3,7 +3,7 @@ name: Android APK
 # Builds the Android APK of this fork (run it from the Actions tab). The fork's changes let a
 # frontend start a game directly: see ZaxnesActivity.getArguments and LaunchedRom.
 #
-# The fork installs as its own app, Zaxnes Plus (io.github.gin649.zaxnes, with its own icon and
+# The fork installs as its own app, Xnes3D+ (io.github.gin649.zaxnes, with its own icon and
 # colours: .github/fork/branding.py), beside the official Zaxnes, and is
 # signed with rust/build/android/fork.keystore so each build installs over the last one, keeping
 # its profiles and saves. That key is only for this personal fork.
@@ -46,7 +46,7 @@ jobs:
             rust/target-android
           key: android-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: Zaxnes Plus branding (app id, names, icon, colours)
+      - name: Xnes3D+ branding (app id, names, icon, colours)
         run: |
           python3 .github/fork/branding.py
           # The interface font, Pixelify Sans (SIL Open Font License), packed as a raw resource
@@ -92,7 +92,7 @@ jobs:
           version=$(grep -m1 '^version = ' rust/Cargo.toml | cut -d'"' -f2)
           tag="v${version}-plus.${{ github.run_number }}"
           apk=$(ls rust/target-android/package/*.apk | head -1)
-          cp "$apk" "ZaxnesPlus-${version}-plus.${{ github.run_number }}-android-arm64.apk"
-          gh release create "$tag" "ZaxnesPlus-${version}-plus.${{ github.run_number }}-android-arm64.apk" \
-            --target "${{ github.sha }}" --title "Zaxnes Plus ${version} (build ${{ github.run_number }})" \
-            --notes "Zaxnes ${version} with the Zaxnes Plus changes: an NES look, your own ROM folder, 3D profiles from the emulator's own menus (Options > Games and 3D profiles), Smart 3D for games without a profile, and games that open straight from a launcher. Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0. Interface font: Pixelify Sans (SIL Open Font License)."
+          cp "$apk" "Xnes3D-${version}-plus.${{ github.run_number }}-android-arm64.apk"
+          gh release create "$tag" "Xnes3D-${version}-plus.${{ github.run_number }}-android-arm64.apk" \
+            --target "${{ github.sha }}" --title "Xnes3D+ ${version} (build ${{ github.run_number }})" \
+            --notes "Xnes3D+, a 3D NES emulator for Android built on nixxou's Zaxnes ${version}: an NES look, your own ROM and saves folders, RetroArch-style hotkeys (L2 rewind, R2 fast forward, R1 save, L1 load, L3+R3 menu), 15 rotating save states and an auto save, 3D profiles from its own menus, and Smart 3D for games without a profile. Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0. Interface font: Pixelify Sans (SIL Open Font License)."

@@ -41,16 +41,16 @@ const BAR: [f32; 4] = [0.1, 0.1, 0.16, 1.0];
 const WARNING: [f32; 4] = [1.0, 0.45, 0.35, 1.0];
 /// The [W] of a game whose ROM was not studied yet: its profile or its name says a hack.
 const UNSTUDIED: [f32; 4] = [0.42, 0.44, 0.5, 1.0];
-/// Zaxnes Plus: the NES look. The red of the stripe under the title, and of the A and B button
+/// Xnes3D+: the NES look. The red of the stripe under the title, and of the A and B button
 /// badges of the hints; the grey of the other buttons; the line between rows.
 const NES_RED: [f32; 4] = [0.85, 0.09, 0.15, 1.0];
 const NES_BUTTON_GREY: [f32; 4] = [0.36, 0.36, 0.38, 1.0];
 const ON_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const ROW_LINE: [f32; 4] = [1.0, 1.0, 1.0, 0.07];
-/// The logo in the title band of the game list: the name, then "PLUS" in red.
-const LOGO_NAME: &str = "ZAXNES";
-const LOGO_PLUS: &str = " PLUS";
-/// Zaxnes Plus: the 5 x 7 pixel letters of the logo, a row per byte, the left square the high
+/// The logo in the title band of the game list: the name, then the "+" in red.
+const LOGO_NAME: &str = "XNES3D";
+const LOGO_PLUS: &str = "+";
+/// Xnes3D+: the 5 x 7 pixel letters of the logo, a row per byte, the left square the high
 /// bit of five. Letters it does not have are blank.
 const fn pixel_letter(letter: char) -> [u8; 7] {
     match letter {
@@ -63,6 +63,9 @@ const fn pixel_letter(letter: char) -> [u8; 7] {
         'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
         'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
         'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
+        '3' => [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
+        '+' => [0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000],
         _ => [0; 7],
     }
 }
@@ -155,7 +158,7 @@ impl Painter<'_> {
             .add_rect([0.0, 0.0], [self.size[0], metrics.title_band()], BAR)
             .filled(true)
             .build();
-        // Zaxnes Plus: a red stripe under the band, as on the console's front.
+        // Xnes3D+: a red stripe under the band, as on the console's front.
         let stripe = (metrics.padding * 0.3).max(2.0);
         self.list
             .add_rect(
@@ -169,11 +172,11 @@ impl Painter<'_> {
             let _heading = self.heading.map(|font| self.ui.push_font(font));
             if title == text::PRODUCT_NAME {
                 // The game list carries the logo, in the pixel letters of the app icon: the
-                // name, then "PLUS" in red.
+                // name, then the "+" in red.
                 let pixel = (metrics.heading / 7.0).floor().max(2.0);
                 let top = (metrics.title_band() - stripe - pixel * 7.0) * 0.5;
                 let x = self.pixel_word(metrics.padding, top, pixel, TEXT, LOGO_NAME);
-                self.pixel_word(x + pixel * 4.0, top, pixel, NES_RED, LOGO_PLUS.trim());
+                self.pixel_word(x + pixel * 2.0, top, pixel, NES_RED, LOGO_PLUS);
             } else {
                 self.text(metrics.padding, metrics.padding, FOCUS, title);
             }
@@ -373,7 +376,7 @@ impl Painter<'_> {
             if let Some((_, progress)) = self.hold_ring.filter(|(label, _)| label == button) {
                 self.ring(x, y, button, progress);
             }
-            // Zaxnes Plus: the button as a badge, round for a face button, red for A and B as
+            // Xnes3D+: the button as a badge, round for a face button, red for A and B as
             // on the NES pad, grey for the others.
             let badge = self.button_badge(x, y, button);
             x += badge + metrics.padding * 0.5;
@@ -395,7 +398,7 @@ impl Painter<'_> {
         }
     }
 
-    /// Zaxnes Plus: `word` in 5 x 7 pixel letters (those of the logo, upper case only) whose
+    /// Xnes3D+: `word` in 5 x 7 pixel letters (those of the logo, upper case only) whose
     /// squares are `pixel` wide, from `x`, `y`. Returns where the next letter would start.
     #[allow(clippy::cast_precision_loss)] // at most 7 rows of 5 squares
     fn pixel_word(&self, x: f32, y: f32, pixel: f32, colour: [f32; 4], word: &str) -> f32 {
@@ -418,7 +421,7 @@ impl Painter<'_> {
         x - pixel
     }
 
-    /// Zaxnes Plus: `button` drawn as a badge whose left edge is at `x` and whose text sits on
+    /// Xnes3D+: `button` drawn as a badge whose left edge is at `x` and whose text sits on
     /// the line `y`. Returns its width.
     fn button_badge(&self, x: f32, y: f32, button: &str) -> f32 {
         let metrics = &self.metrics;
@@ -659,7 +662,7 @@ impl HandheldUi {
         painter.title(text::PRODUCT_NAME, &position);
         if total == 0 {
             let folder = self.roms_directory.display().to_string();
-            // Zaxnes Plus: on Android the folder is chosen, not copied to.
+            // Xnes3D+: on Android the folder is chosen, not copied to.
             let message = if crate::android_bridge::available() {
                 "No games here yet.\n\nPress A to choose the folder your NES games are in. \
                  You can change it later in Options > Games and 3D profiles."
@@ -758,7 +761,7 @@ impl HandheldUi {
         if frame.host.achievements.is_enabled() && self.roms.selected_entry().is_some() {
             hints.push(("R2", strings::get(keys::TAB_ACHIEVEMENTS), TEXT));
         }
-        // Zaxnes Plus: with no game listed, A picks the folder (Android).
+        // Xnes3D+: with no game listed, A picks the folder (Android).
         if total == 0 && crate::android_bridge::available() {
             hints = vec![
                 ("A", "Choose ROM folder".to_owned(), TEXT),
@@ -1002,7 +1005,7 @@ impl HandheldUi {
                 options::OptionRow::Overscan | options::OptionRow::Achievements => {
                     format!("{value} >")
                 }
-                // Zaxnes Plus: opened with A, nothing to step.
+                // Xnes3D+: opened with A, nothing to step.
                 options::OptionRow::Android(_) => format!("{value} >"),
                 _ => format!("< {value} >"),
             };
@@ -1466,7 +1469,7 @@ fn home_row_label(entry: &RomEntry) -> String {
 
 /// The tag at the right of a game: its 3D profile, or "2D" when it has none.
 ///
-/// Zaxnes Plus: a game with no profile plays in Smart 3D, and says so.
+/// Xnes3D+: a game with no profile plays in Smart 3D, and says so.
 fn profile_tag(entry: &RomEntry) -> (String, [f32; 4]) {
     match &entry.profile {
         Some(profile) if !profile.two_dimensional => (profile.title.clone(), PROFILE),

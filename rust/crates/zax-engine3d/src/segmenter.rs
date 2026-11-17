@@ -55,7 +55,7 @@ impl SegmentContext<'_> {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let mut pattern = EnginePattern::new(width as u16, height as u16, cells, permanent);
         let mut instance = PatternInstance::new();
-        // Zaxnes Plus: with no profile, Smart 3D gives the shape settings of its own.
+        // Xnes3D+: with no profile, Smart 3D gives the shape settings of its own.
         if crate::smart3d::enabled() {
             crate::smart3d::apply(crate::smart3d::classify(frame, shape), &mut instance);
         }

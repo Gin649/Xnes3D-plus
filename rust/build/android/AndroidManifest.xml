@@ -15,7 +15,7 @@
     <!-- RetroAchievements. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- Zaxnes Plus: the game list reads the player's own ROM folder, wherever it is. -->
+    <!-- Xnes3D+: the game list reads the player's own ROM folder, wherever it is. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
@@ -41,13 +41,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-            <!-- Zaxnes Plus: no "open this file" filter, so Zaxnes Plus stays out of Android's
+            <!-- Xnes3D+: no "open this file" filter, so Xnes3D+ stays out of Android's
                  "Open with" list for zips and other files. A launcher starts a game by naming
                  this activity, which needs no filter: the ROM still comes as the intent's data
                  (see LaunchedRom). -->
         </activity>
 
-        <!-- Zaxnes Plus: the Android half of Options > Games and 3D profiles (pickers,
+        <!-- Xnes3D+: the Android half of Options > Games and 3D profiles (pickers,
              downloads), opened by the emulator itself, so it has no icon of its own; it also
              takes .3dn files opened or shared from a file manager (ProfilesActivity). -->
         <activity

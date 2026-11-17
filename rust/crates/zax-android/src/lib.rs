@@ -60,7 +60,7 @@ mod entry {
         std::panic::catch_unwind(|| zax_app::program::run(&arguments)).unwrap_or(1)
     }
 
-    // ---- Zaxnes Plus profiles: converting a 3dSen bundle picked on the device -------------------
+    // ---- Xnes3D+ profiles: converting a 3dSen bundle picked on the device -------------------
 
     use std::ffi::{c_void, CString};
 

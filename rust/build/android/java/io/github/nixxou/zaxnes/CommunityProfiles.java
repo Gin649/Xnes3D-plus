@@ -20,7 +20,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Get community profiles: downloads the community 3D profiles listed in Zaxnes Plus'
+ * Get community profiles: downloads the community 3D profiles listed in Xnes3D+'
  * community/profiles.json, each from its creator's own link, into Zaxnes' profiles. A profile is
  * fetched again only when its link or version changes. Runs on a background thread.
  */
@@ -153,7 +153,7 @@ final class CommunityProfiles {
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
             c.setInstanceFollowRedirects(false);
-            c.setRequestProperty("User-Agent", "ZaxnesPlus");
+            c.setRequestProperty("User-Agent", "Xnes3D");
             int code = c.getResponseCode();
             if (code >= 300 && code < 400) {
                 String next = c.getHeaderField("Location");

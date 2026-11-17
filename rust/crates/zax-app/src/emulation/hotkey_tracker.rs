@@ -24,7 +24,7 @@ flag_set! {
 /// seconds.
 pub const SELECT_HOLD_SECONDS: f32 = 0.1;
 
-/// Zaxnes Plus: while Roll Back is held, it goes back again every this many real seconds, so
+/// Xnes3D+: while Roll Back is held, it goes back again every this many real seconds, so
 /// holding the button rewinds (each step goes back about a second and a half).
 pub const ROLLBACK_REPEAT_SECONDS: f32 = 0.45;
 
@@ -34,7 +34,7 @@ pub struct HotkeyTracker {
     menu: PressTracker,
     combinations: [PlayerCombination; 2],
     rollback: EdgeDetector,
-    /// Zaxnes Plus: real seconds Roll Back has been held since its last step.
+    /// Xnes3D+: real seconds Roll Back has been held since its last step.
     rollback_held: f32,
     quick_save: EdgeDetector,
     quick_load: EdgeDetector,
@@ -76,7 +76,7 @@ impl HotkeyTracker {
             events |= HotkeyEvents::ROLLBACK;
             self.rollback_held = 0.0;
         } else if rolling {
-            // Zaxnes Plus: held, it keeps rewinding.
+            // Xnes3D+: held, it keeps rewinding.
             self.rollback_held += real_seconds;
             if self.rollback_held >= ROLLBACK_REPEAT_SECONDS {
                 self.rollback_held -= ROLLBACK_REPEAT_SECONDS;
