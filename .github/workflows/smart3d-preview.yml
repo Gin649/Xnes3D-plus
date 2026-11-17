@@ -53,6 +53,8 @@ jobs:
           # quicker than the shipped release profile; the pictures are the same
           CARGO_PROFILE_RELEASE_LTO: 'false'
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+          # rustc can run out of stack on the engine's largest functions
+          RUST_MIN_STACK: '268435456'
         run: cargo build --release -p zax-harness
 
       - name: Render flat, default 3D and Smart 3D
