@@ -95,7 +95,7 @@ zax-harness render --out <dir> --rom <file.nes> [--profile <title|file>] [--run 
   --distance <d>           camera setpoint distance (default 104 / atan(FOV/2))
   --mesh <algorithm>       greedy (default), marching or multicolor (REQ-E3D-340)
   --default-3d             with no profile, play in 3D with the default geometry (every
-                           shape alike), as the "3D by default" entry did before Smart 3D
+                           shape alike), as the 3D by default entry did before Smart 3D
   --smart-3d               with no profile, play in Smart 3D (Zaxnes Plus): the shapes learned
                            get settings of their own (zax-engine3d smart3d.rs)
   --no-shadows             render with the shadows off
