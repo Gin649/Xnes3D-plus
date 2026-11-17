@@ -1140,7 +1140,12 @@ impl HandheldUi {
         let painter = self.painter(ui);
         let metrics = &self.metrics;
         // The menu is a panel in the middle, so the game stays visible around it.
-        let rows = self.overlay.items().len();
+        // Xnes3D+: with the taller rows it can be longer than the screen, so it shows the rows
+        // that fit and scrolls with the selection.
+        let room = size[1] - metrics.hint_band() - metrics.title_band() - 2.0 * metrics.padding;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few rows
+        let fit = ((room / metrics.row).floor().max(1.0)) as usize;
+        let rows = self.overlay.items().len().min(fit);
         let panel_height = metrics.title_band()
             + metrics.row * f32::from(u16::try_from(rows).unwrap_or(u16::MAX))
             + metrics.padding;
@@ -1153,7 +1158,7 @@ impl HandheldUi {
             .filled(true)
             .rounding(metrics.padding)
             .build();
-        self.draw_overlay_rows(&painter, frame, left, top, panel_width);
+        self.draw_overlay_rows(&painter, frame, left, top, panel_width, rows);
         painter.hints(layout::hints(Screen::Overlay));
     }
 
@@ -1164,6 +1169,7 @@ impl HandheldUi {
         left: f32,
         top: f32,
         width: f32,
+        visible: usize,
     ) {
         let metrics = &self.metrics;
         {
@@ -1175,8 +1181,25 @@ impl HandheldUi {
                 &strings::get(keys::HANDHELD_MENU_TITLE),
             );
         }
-        for (index, item) in self.overlay.items().iter().enumerate() {
-            let slot = f32::from(u16::try_from(index).unwrap_or(0));
+        let items = self.overlay.items();
+        let first = first_visible(self.overlay.selected_index(), visible, items.len());
+        // Xnes3D+: "more" marks at the right of the title when rows are above or below.
+        let more = match (first > 0, first + visible < items.len()) {
+            (true, true) => "^ v",
+            (true, false) => "^",
+            (false, true) => "v",
+            (false, false) => "",
+        };
+        if !more.is_empty() {
+            painter.text(
+                left + width - metrics.padding * 1.5 - painter.width(more),
+                top + metrics.padding,
+                DIM,
+                more,
+            );
+        }
+        for (shown, (index, item)) in items.iter().enumerate().skip(first).take(visible).enumerate() {
+            let slot = f32::from(u16::try_from(shown).unwrap_or(0));
             let row_top = top + metrics.title_band() + slot * metrics.row;
             let selected = index == self.overlay.selected_index();
             if selected {
