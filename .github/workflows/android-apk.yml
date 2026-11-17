@@ -20,6 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Xnes3D+: each build is a release named after .github/fork/VERSION. Stop at once, before
+      # the long build, when that version was already released: raise the version first.
+      - name: The version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(tr -d '[:space:]' < .github/fork/VERSION)
+          if gh release view "v${version}" > /dev/null 2>&1; then
+            echo "::error::Xnes3D+ v${version} is already released. Raise .github/fork/VERSION first."
+            exit 1
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -89,10 +101,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(grep -m1 '^version = ' rust/Cargo.toml | cut -d'"' -f2)
-          tag="v${version}-plus.${{ github.run_number }}"
+          version=$(tr -d '[:space:]' < .github/fork/VERSION)
+          zaxnes=$(grep -m1 '^version = ' rust/Cargo.toml | cut -d'"' -f2)
+          tag="v${version}"
           apk=$(ls rust/target-android/package/*.apk | head -1)
-          cp "$apk" "Xnes3D-${version}-plus.${{ github.run_number }}-android-arm64.apk"
-          gh release create "$tag" "Xnes3D-${version}-plus.${{ github.run_number }}-android-arm64.apk" \
-            --target "${{ github.sha }}" --title "Xnes3D+ ${version} (build ${{ github.run_number }})" \
-            --notes "Xnes3D+, a 3D NES emulator for Android built on nixxou's Zaxnes ${version}: an NES look, your own ROM and saves folders, RetroArch-style hotkeys (L2 rewind, R2 fast forward, R1 save, L1 load, L3+R3 menu), 15 rotating save states and an auto save, 3D profiles from its own menus, and Smart 3D for games without a profile. Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0. Interface font: Pixelify Sans (SIL Open Font License)."
+          cp "$apk" "Xnes3D-plus-${version}-android-arm64.apk"
+          gh release create "$tag" "Xnes3D-plus-${version}-android-arm64.apk" --latest \
+            --target "${{ github.sha }}" --title "Xnes3D+ v${version}" \
+            --notes "Xnes3D+, a 3D NES emulator for Android built on nixxou's Zaxnes ${zaxnes}: an NES look, your own ROM and saves folders, RetroArch-style hotkeys (L2 rewind, R2 fast forward, R1 save, L1 load, L3+R3 menu), 15 rotating save states and an auto save, 3D profiles from its own menus, and Smart 3D for games without a profile. Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0. Interface font: Pixelify Sans (SIL Open Font License)."

@@ -1,0 +1,25 @@
+name: Remove the prebuild releases
+
+# Xnes3D+: deletes the releases of the early builds (tags v<version>-plus.<build>) and their
+# tags, so the releases start at v1.0.0. The preview releases (ui-preview, smart3d-preview) are
+# kept. Run it from the Actions tab.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to delete releases and tags
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the prebuild releases and their tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' | grep -E '^v[0-9.]+-plus\.[0-9]+$' | while read -r tag; do
+            echo "deleting $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done
+          gh release list --limit 200

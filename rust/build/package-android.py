@@ -57,6 +57,10 @@ def tool(folder, name):
 
 
 def version():
+    # Xnes3D+: the fork's own version (.github/fork/VERSION) names the APK when it is there.
+    fork = os.path.join(RUST, '..', '.github', 'fork', 'VERSION')
+    if os.path.exists(fork):
+        return open(fork, encoding='utf-8').read().strip()
     for line in open(os.path.join(RUST, 'Cargo.toml'), encoding='utf-8'):
         if line.startswith('version = '):
             return line.split('"')[1]
