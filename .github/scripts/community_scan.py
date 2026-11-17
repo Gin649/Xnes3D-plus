@@ -28,7 +28,9 @@ def topics():
     found = []
     for page in range(1, 5):
         text = get(BOARD + ("" if page == 1 else f"?page={page}"))
-        links = re.findall(r'href="(https://itch\.io/t/\d+/[^"#?]+)"', text)
+        print(f"board page {page}: {len(text)} characters", file=sys.stderr)
+        links = ["https://itch.io" + l if l.startswith("/") else l
+                 for l in re.findall(r'href="((?:https://itch\.io)?/t/\d+/[^"#?]+)"', text)]
         new = [l for l in dict.fromkeys(links) if l not in found]
         if not new:
             break
