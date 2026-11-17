@@ -10,6 +10,10 @@
 //! - a background shape is placed by how filled in it is: mostly empty (distant details) thin,
 //!   solid (ground, bricks, pipes) thick, the rest in between; a shape covering most of the
 //!   screen is a backdrop, at the back;
+//! - with no profile the engine learns most of the background one tile at a time, so a single
+//!   tile is also looked at with its neighbours: the plain tile that fills much of the screen is
+//!   the sky and goes to the back, and a tile with nothing above and below it is a letter of a
+//!   line of text and is kept thin;
 //! - a status bar (score, lives, health) is kept as a thin flat panel with no shadow. It stays on
 //!   the first layer like the rest: moving only the pieces recognised as the bar to the interface
 //!   layer pulled them away from the pieces that were not (a digit that just changed), and
@@ -27,7 +31,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 
 use crate::engine::build_geometry;
-use crate::frame::{ConversionFrame, ShapeId};
+use crate::frame::{ConversionFrame, FrameTile, ShapeId};
+use crate::vectors::Cell;
 use crate::instance::PatternInstance;
 use crate::settings::ZLayer;
 use crate::segmenter::SegmentContext;
@@ -77,14 +82,16 @@ pub enum Kind {
     Solid,
     /// A background shape covering most of the screen.
     Backdrop,
+    /// Xnes3D+: a plain tile of one colour that fills much of the screen, such as a sky.
+    Sky,
     /// A status bar: score, lives, health.
     StatusBar,
 }
 
 /// Below this share of drawn pixels a background shape is sparse.
 const SPARSE_FILL: f32 = 0.25;
-/// Xnes3D+: a background shape of at most this many tiles is thin, whatever its fill.
-const SMALL_SHAPE_TILES: i32 = 2;
+/// Xnes3D+: a plain tile is the sky when at least this share of the background tiles shows it.
+const SKY_SHARE: f32 = 0.20;
 /// Xnes3D+: a background shape at most this many tiles tall, and not solid, is a line of text.
 const TEXT_LINE_ROWS: i32 = 1;
 /// From this share of drawn pixels a background shape is solid.
@@ -92,7 +99,8 @@ const SOLID_FILL: f32 = 0.70;
 /// A status bar is at most this many tiles tall...
 const STATUS_BAR_MAX_ROWS: i32 = 6;
 /// ...at least this many wide...
-const STATUS_BAR_MIN_COLUMNS: i32 = 2;
+/// Xnes3D+: one, since with no profile most of a status bar is learned one tile at a time.
+const STATUS_BAR_MIN_COLUMNS: i32 = 1;
 /// ...and starts in the top band of the screen, or ends in the bottom one (pixels).
 const STATUS_BAR_TOP_BAND: i32 = 64;
 const STATUS_BAR_BOTTOM_BAND: i32 = 176;
@@ -111,6 +119,9 @@ pub fn apply(kind: Kind, instance: &mut PatternInstance) {
         Kind::Medium => (6, ZLayer::L1),
         Kind::Solid => (12, ZLayer::L1),
         Kind::Backdrop => (2, ZLayer::L4),
+        // Xnes3D+ (owner request): the sky sits behind the scenery, so the picture has depth
+        // instead of the scenery standing flat against it.
+        Kind::Sky => (2, ZLayer::L4),
         Kind::StatusBar => (1, ZLayer::L1),
     };
     instance.depth = depth;
@@ -135,17 +146,24 @@ pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
         return Kind::Backdrop;
     }
     let tiles = i32::try_from(data.tile_count()).unwrap_or(i32::MAX).max(1);
-    // Xnes3D+: a shape of one or two tiles is most often a letter of the game's text, or a small
-    // detail: kept thin, so words read cleanly instead of turning into thick blocks.
-    if tiles <= SMALL_SHAPE_TILES {
-        return Kind::Sparse;
-    }
     #[allow(clippy::cast_precision_loss)] // at most 35 x 33 tiles of 64 pixels
     let fill = data.pixel_count() as f32 / (tiles * 64) as f32;
-    // Xnes3D+: a background shape one tile tall that is not solid is most often a line of text
-    // (a whole word or sentence joins into one shape), so it is kept thin like a single letter.
-    // A solid one-tile ledge or platform still gets its full depth.
-    if data.tile_size().y <= TEXT_LINE_ROWS && fill < SOLID_FILL {
+    // Xnes3D+: a single tile, the usual case with no profile, is judged with its neighbours.
+    if tiles == 1 {
+        if let Some(&first) = data.tiles().first() {
+            let tile = frame.tile(first);
+            if is_sky_tile(frame, tile) {
+                return Kind::Sky;
+            }
+            if fill < SOLID_FILL && is_text_tile(frame, tile) {
+                return Kind::Sparse;
+            }
+        }
+    }
+    // Xnes3D+: a background shape of several tiles in one row that is not solid is most often
+    // a line of text (a whole word joins into one shape once learned), so it is kept thin like a
+    // single letter. A solid one-tile ledge or platform still gets its full depth.
+    if tiles > 1 && data.tile_size().y <= TEXT_LINE_ROWS && fill < SOLID_FILL {
         return Kind::Sparse;
     }
     if fill < SPARSE_FILL {
@@ -155,6 +173,35 @@ pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
     } else {
         Kind::Medium
     }
+}
+
+/// Xnes3D+: true when `tile` is plain (all its pixels drawn, in one colour) and the same image
+/// covers a large share of the background, as a sky does.
+fn is_sky_tile(frame: &ConversionFrame, tile: &FrameTile) -> bool {
+    let image = tile.image();
+    if image.pixel_count() < 64 || image.color_count() != 1 {
+        return false;
+    }
+    let mut total = 0u32;
+    let mut same = 0u32;
+    for other in frame.background_tiles() {
+        total += 1;
+        if other.image().id() == image.id() {
+            same += 1;
+        }
+    }
+    #[allow(clippy::cast_precision_loss)] // at most a few thousand tiles
+    let share = same as f32 / total.max(1) as f32;
+    share >= SKY_SHARE
+}
+
+/// Xnes3D+: true when the cells above and below `tile` hold no background tile (only the
+/// background colour): the tile is part of a line of text, such as a story or a title screen.
+fn is_text_tile(frame: &ConversionFrame, tile: &FrameTile) -> bool {
+    let cell = tile.position();
+    let above = Cell::new(cell.x, cell.y - 1);
+    let below = Cell::new(cell.x, cell.y + 1);
+    frame.background_at_cell(above).is_none() && frame.background_at_cell(below).is_none()
 }
 
 /// The fine scroll of the playfield in this frame: the position within its 8 x 8 cell (x mod 8,
@@ -259,6 +306,8 @@ const MAIN_SCORE: f32 = 30.0;
 const MAX_SCORE: f32 = 120.0;
 /// Another sprite takes the place only once it scores this much more than the current one.
 const SWITCH_MARGIN: f32 = 15.0;
+/// Score lost by a sprite each frame it moves sideways while no direction is pressed.
+const IDLE_PENALTY: f32 = 0.5;
 
 const PAD_LEFT: u8 = 1 << 6;
 const PAD_RIGHT: u8 = 1 << 7;
@@ -372,14 +421,18 @@ pub(crate) fn raise_main_character(frame: &mut ConversionFrame) {
             .map(|(index, _)| index);
         let index = if let Some(index) = nearest {
             let followed = &mut tracker.followed[index];
+            // How the sprite moved in the level: on screen, minus what the scrolling did.
+            let moved = (x - followed.x) - shift;
             if direction != 0.0 {
-                // How the sprite moved in the level: on screen, minus what the scrolling did.
-                let moved = (x - followed.x) - shift;
                 if moved * direction > 0.0 {
                     followed.score = (followed.score + 1.0).min(MAX_SCORE);
                 } else if moved * direction < 0.0 {
                     followed.score = (followed.score - 1.0).max(0.0);
                 }
+            } else if moved.abs() >= 1.0 {
+                // Moving sideways with no direction pressed: most likely an enemy walking on
+                // its own (the character mostly stops when the D-pad is let go).
+                followed.score = (followed.score - IDLE_PENALTY).max(0.0);
             }
             followed.x = x;
             followed.y = y;
