@@ -59,8 +59,8 @@ jobs:
           SDL_AUDIODRIVER: dummy
         run: |
           # Start on the title screen, then flap every 20 frames.
-          press="120:start,180:start"
-          for f in $(seq 240 20 1600); do press="$press,$f:a"; done
+          press="120-130:start,180-190:start"
+          for f in $(seq 240 18 1600); do press="$press,$f-$((f+3)):a"; done
           out="$RUNNER_TEMP/preview"
           mkdir -p "$out"
           for frames in 400 900 1500; do
@@ -74,7 +74,8 @@ jobs:
               done
               pictures=""
               for mode in flat default-3d smart-3d; do
-                pictures="$pictures -label $mode $(ls "$out/raw/$frames-$angle-$mode"/*.png | head -1)"
+                # game.png is the 3D render; game-2d.png the flat NES picture
+                pictures="$pictures -label $mode $out/raw/$frames-$angle-$mode/game.png"
               done
               montage $pictures -tile 3x1 -geometry +6+6 -pointsize 18 "$out/frame$frames-angle$angle.png"
             done
