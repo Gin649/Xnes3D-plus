@@ -31,6 +31,26 @@ pub enum AndroidAction {
 
 /// The file Java writes the picked ROM folder to. Must match ZaxnesActivity.ROMS_FOLDER_FILE.
 pub const ROMS_FOLDER_FILE: &str = "roms-folder.txt";
+/// The file Java writes the picked saves folder to. Must match ProfilesActivity.SAVES_FOLDER_FILE.
+pub const SAVES_FOLDER_FILE: &str = "saves-folder.txt";
+
+/// The saves folder chosen: the one in use since the start (`--saves`), or one picked since,
+/// which is used from the next start. Shown on its row of the options.
+static SAVES_FOLDER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Remembers the saves folder chosen, for its row of the options.
+pub fn set_saves_folder(folder: &str) {
+    if let Ok(mut chosen) = SAVES_FOLDER.lock() {
+        *chosen = Some(folder.to_owned());
+    }
+}
+
+/// The saves folder chosen, if any.
+#[must_use]
+pub fn saves_folder() -> Option<String> {
+    SAVES_FOLDER.lock().ok().and_then(|chosen| chosen.clone())
+}
+
 /// The folder Java puts new profiles in. Must match ProfileFolder.INBOX.
 pub const PROFILE_INBOX: &str = "profile-inbox";
 

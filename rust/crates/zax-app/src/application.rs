@@ -1015,6 +1015,16 @@ impl Running {
                 });
             }
         }
+        // The saves folder is used from the next start; its row shows it at once.
+        let file = root.join(crate::android_bridge::SAVES_FOLDER_FILE);
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            let _ = std::fs::remove_file(&file);
+            let folder = text.trim();
+            if !folder.is_empty() {
+                log(&format!("saves folder chosen: '{folder}' (used from the next start)."));
+                crate::android_bridge::set_saves_folder(folder);
+            }
+        }
         let inbox = root.join(crate::android_bridge::PROFILE_INBOX);
         let Ok(entries) = std::fs::read_dir(&inbox) else {
             return;
@@ -1921,6 +1931,7 @@ fn resolve_user_data(options: &AppOptions) -> UserDataPaths {
     }
     open_log_file(&paths);
     if let Some(folder) = options.saves_directory.as_deref() {
+        crate::android_bridge::set_saves_folder(folder);
         use_saves_folder(&mut paths, Path::new(folder));
     }
     paths

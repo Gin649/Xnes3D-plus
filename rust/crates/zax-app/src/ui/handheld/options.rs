@@ -277,9 +277,15 @@ fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
                     .map_or(folder.clone(), |name| name.to_string_lossy().into_owned())
             }
         }
-        AndroidAction::Import3dSen
-        | AndroidAction::ProfilesFolder
-        | AndroidAction::ChooseSavesFolder => "Choose...".to_owned(),
+        AndroidAction::ChooseSavesFolder => crate::android_bridge::saves_folder().map_or_else(
+            || "Choose...".to_owned(),
+            |folder| {
+                std::path::Path::new(&folder)
+                    .file_name()
+                    .map_or(folder.clone(), |name| name.to_string_lossy().into_owned())
+            },
+        ),
+        AndroidAction::Import3dSen | AndroidAction::ProfilesFolder => "Choose...".to_owned(),
         AndroidAction::CommunityProfiles => "Download".to_owned(),
         AndroidAction::CopyProfiles => "Copy".to_owned(),
     }

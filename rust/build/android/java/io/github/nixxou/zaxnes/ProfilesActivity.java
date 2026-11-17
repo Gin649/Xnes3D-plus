@@ -51,6 +51,8 @@ public class ProfilesActivity extends Activity {
 
     /** Must match ROMS_FOLDER_FILE in zax-app's android_bridge.rs. */
     static final String ROMS_FOLDER_FILE = "roms-folder.txt";
+    /** Must match SAVES_FOLDER_FILE in zax-app's android_bridge.rs. */
+    static final String SAVES_FOLDER_FILE = "saves-folder.txt";
 
     private static final int PICK_FOLDER = 1;
     private static final int PICK_BUNDLE = 2;
@@ -205,15 +207,20 @@ public class ProfilesActivity extends Activity {
 
     /** Tells the running app its new ROM folder (it checks for the file twice a second). */
     private boolean sendRomFolder(String path) {
+        return sendAnswer(ROMS_FOLDER_FILE, path);
+    }
+
+    /** Writes {@code text} to {@code name} in the user data folder, whole, for the running app. */
+    private boolean sendAnswer(String name, String text) {
         File root = getExternalFilesDir(null);
         if (root == null) return false;
-        File part = new File(root, ROMS_FOLDER_FILE + ".part");
+        File part = new File(root, name + ".part");
         try (FileOutputStream out = new FileOutputStream(part)) {
-            out.write(path.getBytes("UTF-8"));
+            out.write(text.getBytes("UTF-8"));
         } catch (Exception e) {
             return false;
         }
-        return part.renameTo(new File(root, ROMS_FOLDER_FILE));
+        return part.renameTo(new File(root, name));
     }
 
     // ---- 3dSen bundle -----------------------------------------------------------------------
@@ -412,6 +419,7 @@ public class ProfilesActivity extends Activity {
                 showResult("That folder can't be used", "Choose a folder Xnes3D+ can write to, on the internal storage or an SD card.");
             } else {
                 getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SAVES, path).apply();
+                sendAnswer(SAVES_FOLDER_FILE, path); // its row in the options shows it at once
                 showResult("Saves folder set", "Your saves and save states go to " + folderName(picked)
                     + " (in its saves and states folders) from the next time Xnes3D+ starts. "
                     + "The ones you have now are copied there then.");
