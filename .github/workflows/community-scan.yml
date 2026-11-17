@@ -17,11 +17,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Scan the board
         run: python3 -I .github/scripts/community_scan.py
+      - name: Check the address the app reads the list from
+        run: |
+          curl -sS -L -o /tmp/list.json -w "%{http_code} %{url_effective}\n" \
+            https://raw.githubusercontent.com/Gin649/zaxnes-plus/main/community/profiles.json > community/app-address.txt
+          python3 -c "import json; print(len(json.load(open('/tmp/list.json'))['profiles']), 'profiles')" >> community/app-address.txt || true
       - name: Publish the report on the community-scan branch
         run: |
           git config user.name "Claude"
           git config user.email "noreply@anthropic.com"
           git checkout -B community-scan
-          git add community/scan.json
+          git add community/scan.json community/app-address.txt
           git commit -m "Uploaded by Claude"
           git push -f origin community-scan
