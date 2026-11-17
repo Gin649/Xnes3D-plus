@@ -1,0 +1,2 @@
+200 https://raw.githubusercontent.com/Gin649/zaxnes-plus/main/community/profiles.json
+11 profiles
