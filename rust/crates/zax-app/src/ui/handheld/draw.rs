@@ -173,7 +173,7 @@ impl Painter<'_> {
                 let pixel = (metrics.heading / 7.0).floor().max(2.0);
                 let top = (metrics.title_band() - stripe - pixel * 7.0) * 0.5;
                 let x = self.pixel_word(metrics.padding, top, pixel, TEXT, LOGO_NAME);
-                self.pixel_word(x + pixel * 2.0, top, pixel, NES_RED, LOGO_PLUS.trim());
+                self.pixel_word(x + pixel * 4.0, top, pixel, NES_RED, LOGO_PLUS.trim());
             } else {
                 self.text(metrics.padding, metrics.padding, FOCUS, title);
             }
