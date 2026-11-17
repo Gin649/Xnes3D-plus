@@ -42,6 +42,12 @@ public class ProfilesActivity extends Activity {
     static final int ACTION_COMMUNITY = 3;
     static final int ACTION_PROFILES_FOLDER = 4;
     static final int ACTION_COPY_PROFILES = 5;
+    static final int ACTION_SAVES_FOLDER = 6;
+    static final int LAST_ACTION = ACTION_SAVES_FOLDER;
+
+    /** Where the saves folder is kept; ZaxnesActivity passes it to the native side as --saves. */
+    static final String PREFS = "zaxnes_plus";
+    static final String KEY_SAVES = "saves_folder";
 
     /** Must match ROMS_FOLDER_FILE in zax-app's android_bridge.rs. */
     static final String ROMS_FOLDER_FILE = "roms-folder.txt";
@@ -50,6 +56,10 @@ public class ProfilesActivity extends Activity {
     private static final int PICK_BUNDLE = 2;
     private static final int PICK_ROM_FOLDER = 3;
     private static final int ASK_STORAGE = 4;
+    private static final int PICK_SAVES_FOLDER = 5;
+
+    /** Which folder the storage permission is being asked for: the ROMs' or the saves'. */
+    private boolean forSaves;
 
     /** Waiting for the player to come back from the "All files access" settings page. */
     private boolean waitingForAllFiles;
@@ -72,6 +82,7 @@ public class ProfilesActivity extends Activity {
             case ACTION_COMMUNITY: getCommunityProfiles(); break;
             case ACTION_PROFILES_FOLDER: pickFolder(); break;
             case ACTION_COPY_PROFILES: copyNow(); break;
+            case ACTION_SAVES_FOLDER: forSaves = true; chooseRomFolder(); break;
             default: finish();
         }
     }
@@ -158,10 +169,12 @@ public class ProfilesActivity extends Activity {
     }
 
     private void openRomFolderPicker() {
-        Toast.makeText(this, "Choose the folder your NES games are in.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, forSaves
+            ? "Choose the folder for your saves and save states."
+            : "Choose the folder your NES games are in.", Toast.LENGTH_LONG).show();
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         try {
-            startActivityForResult(i, PICK_ROM_FOLDER);
+            startActivityForResult(i, forSaves ? PICK_SAVES_FOLDER : PICK_ROM_FOLDER);
         } catch (Exception e) {
             showResult("No folder picker", "This device has no folder picker.");
         }
@@ -392,6 +405,17 @@ public class ProfilesActivity extends Activity {
             ProfileFolder.set(this, picked);
             toast(ProfileFolder.importAll(this, inbox()));
             finish();
+        } else if (requestCode == PICK_SAVES_FOLDER) {
+            String path = pathOf(picked);
+            File folder = path == null ? null : new File(path);
+            if (folder == null || !folder.isDirectory() || !folder.canWrite()) {
+                showResult("That folder can't be used", "Choose a folder Zaxnes Plus can write to, on the internal storage or an SD card.");
+            } else {
+                getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SAVES, path).apply();
+                showResult("Saves folder set", "Your saves and save states go to " + folderName(picked)
+                    + " (in its saves and states folders) from the next time Zaxnes Plus starts. "
+                    + "The ones you have now are copied there then.");
+            }
         } else if (requestCode == PICK_ROM_FOLDER) {
             String path = pathOf(picked);
             if (path == null || !new File(path).isDirectory()) {

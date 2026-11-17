@@ -3,7 +3,7 @@
 
 use super::pad::PadButton;
 use super::states::StatesMode;
-use crate::persistence::save_slots::EXPOSED_SLOT_COUNT;
+use crate::persistence::save_slots::CONSOLE_SLOT_COUNT;
 
 /// A row of the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,7 +202,7 @@ impl OverlayModel {
     fn step(&mut self, step: i32) -> Option<OverlayCommand> {
         match self.selected() {
             OverlayItem::SaveState | OverlayItem::LoadState => {
-                let count = i32::try_from(EXPOSED_SLOT_COUNT).unwrap_or(1);
+                let count = i32::try_from(CONSOLE_SLOT_COUNT).unwrap_or(1);
                 self.slot = (self.slot - 1 + step).rem_euclid(count) + 1;
                 None
             }

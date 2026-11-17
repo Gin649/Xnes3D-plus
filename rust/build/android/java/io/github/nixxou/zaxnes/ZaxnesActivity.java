@@ -37,6 +37,12 @@ public class ZaxnesActivity extends SDLActivity {
             args.add("--font");
             args.add(font);
         }
+        // Zaxnes Plus: the saves folder the player chose (Options > Games and 3D profiles).
+        String saves = getSharedPreferences(ProfilesActivity.PREFS, MODE_PRIVATE).getString(ProfilesActivity.KEY_SAVES, null);
+        if (saves != null && new File(saves).isDirectory()) {
+            args.add("--saves");
+            args.add(saves);
+        }
         String rom = LaunchedRom.from(this, getIntent());
         if (rom != null) {
             args.add("--rom");
@@ -76,7 +82,7 @@ public class ZaxnesActivity extends SDLActivity {
      */
     @Override
     protected boolean onUnhandledMessage(int command, Object param) {
-        if (command > 0x8000 && command <= 0x8000 + ProfilesActivity.ACTION_COPY_PROFILES) {
+        if (command > 0x8000 && command <= 0x8000 + ProfilesActivity.LAST_ACTION) {
             ProfilesActivity.open(this, command - 0x8000);
             return true;
         }

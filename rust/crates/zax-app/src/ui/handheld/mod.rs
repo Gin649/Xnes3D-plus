@@ -136,6 +136,8 @@ pub struct HandheldUi {
     metrics: Metrics,
     heading_font: Option<imgui::FontId>,
     effects: Vec<UiEffect>,
+    /// Zaxnes Plus: both sticks held in this frame (the in-game menu combination).
+    pad_l3_r3: bool,
     camera_memory: CameraMemory,
     /// How long Y has been held in game, while it is, and whether the hold already acted.
     flat_view: Option<(f32, bool)>,
@@ -245,6 +247,7 @@ impl HandheldUi {
             metrics: Metrics::for_height(height),
             heading_font: None,
             effects: Vec::new(),
+            pad_l3_r3: false,
             camera_memory: CameraMemory::default(),
             resting_on: None,
             flat_view: None,
@@ -503,6 +506,7 @@ impl HandheldUi {
         self.update_widescreen_hold(pad, seconds, frame.host);
         self.update_resting_study(seconds, frame.host);
         let presses: Vec<PadButton> = pad.presses().collect();
+        self.pad_l3_r3 = pad.is_held(PadButton::L3) && pad.is_held(PadButton::R3);
         for button in presses.iter().copied() {
             // A key that is A and Start at once (Enter) plays the game once, and Start with
             // Select held is the exit combination.
@@ -653,9 +657,12 @@ impl HandheldUi {
     }
 
     /// L2 in game: a hold keeps the camera, a short press puts it back.
+    ///
+    /// Zaxnes Plus: L2 rewinds on Android (the gamepad's default bindings), so the camera
+    /// memory is not on it there.
     fn update_camera_memory(&mut self, pad: &PadState, seconds: f32, host: &mut AppHost) {
         let memory = &mut self.camera_memory;
-        if self.screen != Screen::InGame {
+        if self.screen != Screen::InGame || cfg!(target_os = "android") {
             memory.held = None;
             memory.kept = false;
             return;
@@ -825,6 +832,13 @@ impl HandheldUi {
         }
         if button == PadButton::Menu && self.screen == Screen::InGame {
             self.toggle_overlay(frame.host);
+            return;
+        }
+        // Zaxnes Plus: L3 and R3 together (both sticks pressed in) open the in-game menu.
+        if matches!(button, PadButton::L3 | PadButton::R3) && self.screen == Screen::InGame {
+            if self.pad_l3_r3 {
+                self.toggle_overlay(frame.host);
+            }
             return;
         }
         match self.screen {

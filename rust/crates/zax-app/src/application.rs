@@ -251,6 +251,8 @@ struct Running {
     /// The save state slot `-slot=<n>` (AMD-053 REQ-UI-213) or `--load-state` asks for, until the
     /// game accepts the load: `"1"` to `"36"` or `"quick"`.
     pending_state_load: Option<String>,
+    /// Zaxnes Plus: the game whose auto save was already looked for since it started.
+    auto_loaded_for: Option<String>,
     /// When the audio counters were last written to the log.
     audio_logged_at: Instant,
     /// The MCP server of the editor (`--mcp`, the editor mode), off by default.
@@ -451,6 +453,7 @@ impl Running {
             pipeline: Pipelined::default(),
             resolution: AutomaticResolution::default(),
             pending_state_load: options.slot.clone(),
+            auto_loaded_for: None,
             audio_logged_at: Instant::now(),
             mcp: options
                 .mcp_port
@@ -502,6 +505,7 @@ impl Running {
         self.load_the_asked_state();
         self.take_launch_request();
         self.take_android_answers();
+        self.auto_load_state();
         let frame_begin = self.clock.start();
         let busy_begin = Instant::now();
         let mark = self.clock.start();
@@ -1037,6 +1041,38 @@ impl Running {
         }
         if imported > 0 {
             self.ui.refresh_roms(&self.host);
+        }
+    }
+
+    /// Zaxnes Plus: in the console interface, a game that starts loads its auto save (the state
+    /// written when it was last left, see `EmulationHost::stop_current_game`), as RetroArch does.
+    /// Once per start, after the game is running; a state asked on the command line comes first.
+    fn auto_load_state(&mut self) {
+        if !self.host.console_interface || self.pending_state_load.is_some() {
+            return;
+        }
+        let Some(game) = self.host.current_game_id().map(str::to_owned) else {
+            self.auto_loaded_for = None;
+            return;
+        };
+        if self.auto_loaded_for.as_deref() == Some(game.as_str())
+            || self.host.state() != EmulationState::Running
+            || self.host.is_loading()
+        {
+            return;
+        }
+        self.auto_loaded_for = Some(game);
+        let slot = crate::persistence::save_slots::numbered_slot_id(
+            crate::emulation::host::AUTO_SAVE_SLOT,
+        );
+        if !self.host.slots.is_occupied(&slot) {
+            return;
+        }
+        let args = CommandArgs::of_number(crate::emulation::host::AUTO_SAVE_SLOT);
+        if self.host.can_execute(Command::LoadSlot, &args) {
+            self.host.enqueue(Command::LoadSlot, args);
+            self.host.notifications.show_normal("Auto save loaded");
+            log("auto save loaded.");
         }
     }
 
@@ -1884,7 +1920,48 @@ fn resolve_user_data(options: &AppOptions) -> UserDataPaths {
         ));
     }
     open_log_file(&paths);
+    if let Some(folder) = options.saves_directory.as_deref() {
+        use_saves_folder(&mut paths, Path::new(folder));
+    }
     paths
+}
+
+/// Zaxnes Plus: the battery saves go to `<folder>/saves` and the save states to
+/// `<folder>/states`, a folder the player chose (on Android, one outside the app's hidden
+/// folder). What the user data held is copied there once, file by file, never over a file
+/// already there; the old copies are left where they were. A folder that can't be written to
+/// leaves everything as it was.
+fn use_saves_folder(paths: &mut UserDataPaths, folder: &Path) {
+    let battery = folder.join("saves");
+    let states = folder.join("states");
+    if std::fs::create_dir_all(&battery).is_err() || std::fs::create_dir_all(&states).is_err() {
+        log(&format!(
+            "the saves folder '{}' can't be written to; the saves stay in the user data.",
+            folder.display()
+        ));
+        return;
+    }
+    let copy_missing = |from: &Path, to: &Path| {
+        let Ok(entries) = std::fs::read_dir(from) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let source = entry.path();
+            if !source.is_file() {
+                continue;
+            }
+            let target = to.join(entry.file_name());
+            if !target.exists() {
+                let _ = std::fs::copy(&source, &target);
+            }
+        }
+    };
+    copy_missing(&paths.battery_directory, &battery);
+    copy_missing(&paths.saves_directory, &states);
+    paths.save_index_file = states.join("index.json");
+    paths.saves_directory = states;
+    paths.battery_directory = battery;
+    log(&format!("saves folder: '{}'.", folder.display()));
 }
 
 /// The start-up report of the display: SDL's driver and mode, the GL context it created and the

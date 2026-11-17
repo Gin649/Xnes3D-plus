@@ -24,12 +24,18 @@ flag_set! {
 /// seconds.
 pub const SELECT_HOLD_SECONDS: f32 = 0.1;
 
+/// Zaxnes Plus: while Roll Back is held, it goes back again every this many real seconds, so
+/// holding the button rewinds (each step goes back about a second and a half).
+pub const ROLLBACK_REPEAT_SECONDS: f32 = 0.45;
+
 /// Edge detection over the hotkeys, once per displayed frame.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HotkeyTracker {
     menu: PressTracker,
     combinations: [PlayerCombination; 2],
     rollback: EdgeDetector,
+    /// Zaxnes Plus: real seconds Roll Back has been held since its last step.
+    rollback_held: f32,
     quick_save: EdgeDetector,
     quick_load: EdgeDetector,
     soft_reset: EdgeDetector,
@@ -65,8 +71,17 @@ impl HotkeyTracker {
             PressKind::Long => events |= HotkeyEvents::MENU_LONG,
             PressKind::None => {}
         }
-        if self.rollback.rising(mask.contains(InputAction::ROLL_BACK)) {
+        let rolling = mask.contains(InputAction::ROLL_BACK);
+        if self.rollback.rising(rolling) {
             events |= HotkeyEvents::ROLLBACK;
+            self.rollback_held = 0.0;
+        } else if rolling {
+            // Zaxnes Plus: held, it keeps rewinding.
+            self.rollback_held += real_seconds;
+            if self.rollback_held >= ROLLBACK_REPEAT_SECONDS {
+                self.rollback_held -= ROLLBACK_REPEAT_SECONDS;
+                events |= HotkeyEvents::ROLLBACK;
+            }
         }
         // REQ-INP-103: a request per displayed frame while the key is held.
         if mask.contains(InputAction::FAST_FORWARD) {

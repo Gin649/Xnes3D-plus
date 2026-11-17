@@ -260,6 +260,9 @@ const fn pad_mapping(button: Button) -> Option<(PadButton, Option<Key>)> {
         Button::Back => (PadButton::Select, Some(Key::GamepadBack)),
         Button::Start => (PadButton::Start, Some(Key::GamepadStart)),
         Button::Guide => (PadButton::Menu, None),
+        // Zaxnes Plus: both sticks pressed in together open the in-game menu.
+        Button::LeftStick => (PadButton::L3, None),
+        Button::RightStick => (PadButton::R3, None),
         _ => return None,
     })
 }

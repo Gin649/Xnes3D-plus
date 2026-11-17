@@ -3,7 +3,7 @@
 //! The two uses look apart (colour and title), so that a save is never taken for a load.
 
 use super::pad::PadButton;
-use crate::persistence::save_slots::EXPOSED_SLOT_COUNT;
+use crate::persistence::save_slots::CONSOLE_SLOT_COUNT;
 
 /// Whether the screen saves or loads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl StatesModel {
         let index = usize::try_from(slot - 1).unwrap_or(0);
         Self {
             mode,
-            selected: index.min(EXPOSED_SLOT_COUNT - 1),
+            selected: index.min(CONSOLE_SLOT_COUNT - 1),
         }
     }
 
@@ -83,7 +83,7 @@ impl StatesModel {
         button: PadButton,
         state_of: impl Fn(i32) -> SlotState,
     ) -> Option<StatesCommand> {
-        let count = EXPOSED_SLOT_COUNT;
+        let count = CONSOLE_SLOT_COUNT;
         match button {
             PadButton::Up => self.selected = (self.selected + count - 1) % count,
             PadButton::Down => self.selected = (self.selected + 1) % count,

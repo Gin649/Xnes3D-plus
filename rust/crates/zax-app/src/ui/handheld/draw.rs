@@ -1279,7 +1279,7 @@ impl HandheldUi {
 
         // The slots, on the left.
         let split = (size[0] * 0.56).round();
-        let total = crate::persistence::save_slots::EXPOSED_SLOT_COUNT;
+        let total = crate::persistence::save_slots::CONSOLE_SLOT_COUNT;
         let rows = metrics.visible_rows(size[1]);
         let first = first_visible(states.selected_index(), rows, total);
         for (row, index) in (first..total).take(rows).enumerate() {

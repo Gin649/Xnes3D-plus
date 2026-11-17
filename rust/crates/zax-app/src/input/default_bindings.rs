@@ -3,7 +3,7 @@
 use zax_platform::input::{standard_gamepad, Key, PhysicalControl};
 
 use super::binding_set::BindingSet;
-use super::binding_target::BindingDeviceKind;
+use super::binding_target::{BindingDeviceKind, BindingTarget};
 use super::input_action::InputAction;
 
 /// Player one's default keys. `QuickSave` and `QuickLoad` have no default key: the combinations of
@@ -257,16 +257,41 @@ pub fn create_handheld_gamepad(standard: bool) -> BindingSet {
     set
 }
 
-/// The gamepad set of the Android package (owner request: as the desktop's console mode): the
-/// handheld defaults, the face buttons by their labels as Android reports them, and the rollback
-/// on the right stick's click as on the desktop.
+/// The gamepad set the Android package had before Zaxnes Plus changed it: what a pad saved then
+/// still has, so it moves to the new one ([`create_android_gamepad`]).
 #[must_use]
-pub fn create_android_gamepad(standard: bool) -> BindingSet {
+pub fn create_former_android_gamepad(standard: bool) -> BindingSet {
     let mut set = create_handheld_gamepad(standard);
     if standard {
         set.set_action(
             InputAction::ROLL_BACK,
             PhysicalControl::button(standard_gamepad::RIGHT_STICK),
+        );
+    }
+    set
+}
+
+/// The gamepad set of the Android package. Zaxnes Plus: the handheld defaults, with the
+/// shoulders and the left trigger as RetroArch players expect them: L2 rewinds (held), R2 fast
+/// forwards, R1 saves a state and L1 loads the newest one. Zoom stays on a pinch of the screen,
+/// and both sticks pressed in open the menu (the handheld interface, not a binding).
+#[must_use]
+pub fn create_android_gamepad(standard: bool) -> BindingSet {
+    let mut set = create_handheld_gamepad(standard);
+    if standard {
+        set.clear(&BindingTarget::of(InputAction::ZOOM_IN));
+        set.clear(&BindingTarget::of(InputAction::ZOOM_OUT));
+        set.set_action(
+            InputAction::ROLL_BACK,
+            PhysicalControl::trigger(standard_gamepad::LEFT_TRIGGER),
+        );
+        set.set_action(
+            InputAction::QUICK_LOAD,
+            PhysicalControl::button(standard_gamepad::LEFT_BUMPER),
+        );
+        set.set_action(
+            InputAction::QUICK_SAVE,
+            PhysicalControl::button(standard_gamepad::RIGHT_BUMPER),
         );
     }
     set

@@ -20,6 +20,8 @@ pub const SCHEMA_VERSION: i32 = 1;
 pub const NUMBERED_SLOT_COUNT: usize = 36;
 /// Number of numbered slots the menus expose.
 pub const EXPOSED_SLOT_COUNT: usize = 10;
+/// Zaxnes Plus: the numbered slots the console interface shows, the 15 its save button goes round.
+pub const CONSOLE_SLOT_COUNT: usize = 15;
 /// Identifier of the quick slot.
 pub const QUICK_SLOT_ID: &str = "quick";
 

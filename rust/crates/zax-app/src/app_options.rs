@@ -246,6 +246,9 @@ pub struct AppOptions {
     /// The folder the handheld ROM list shows (Rust-only); `None` for the `roms` folder of the
     /// user data.
     pub roms_directory: Option<String>,
+    /// Zaxnes Plus: the folder the battery saves and the save states go to (`--saves`); `None`
+    /// for those of the user data.
+    pub saves_directory: Option<String>,
     /// How far the frame clock catches up (Rust-only); `None` for the platform default.
     pub catch_up: Option<CatchUp>,
     /// The graphics API of this run, as a `video.backend` value (Rust-only); `None` for the
@@ -303,6 +306,7 @@ impl Default for AppOptions {
             handheld: false,
             console: false,
             roms_directory: None,
+            saves_directory: None,
             catch_up: None,
             backend: None,
             slot: None,
@@ -475,6 +479,9 @@ impl AppOptions {
             "--console" => self.console = true,
             "--roms" => {
                 self.roms_directory = Some(next_value(arguments, index, "--roms")?.to_owned());
+            }
+            "--saves" => {
+                self.saves_directory = Some(next_value(arguments, index, "--saves")?.to_owned());
             }
             // The Rust-only spelling of `-slot=<n>`: a number only, so the quick slot is out of
             // its reach. The two fill the same field; nothing is duplicated.

@@ -14,6 +14,9 @@ use crate::persistence::save_slots::{self, is_valid_slot_id, SaveSlotIndex, QUIC
 use crate::persistence::save_state_file::{self, SaveStateContent, SaveStateHeader};
 use crate::user_data_paths::{remove_file_if_present, rom_file_stem, write_atomic};
 
+/// Zaxnes Plus: how many numbered slots the console's save button goes round.
+pub const ROTATING_SLOTS: i32 = 15;
+
 impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
     /// The name the files of `game_id` are given (owner request): its ROM's file name without
     /// its extension, or the game's identifier for a game without a ROM file.
@@ -211,9 +214,54 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         Ok(())
     }
 
+    /// Zaxnes Plus: the slot the console's save button writes next, among the first
+    /// [`ROTATING_SLOTS`]: the first empty one, else the one after the newest, round to 1 after
+    /// the last, so the oldest is the one replaced (RetroArch's auto-increment).
+    fn next_rotating_slot(&self) -> i32 {
+        let mut newest: Option<(i64, i32)> = None;
+        for number in 1..=ROTATING_SLOTS {
+            match self.slots.find(&save_slots::numbered_slot_id(number)) {
+                Some(record) if record.is_occupied() => {
+                    if newest.is_none_or(|(at, _)| record.saved_at >= at) {
+                        newest = Some((record.saved_at, number));
+                    }
+                }
+                _ => return number,
+            }
+        }
+        newest.map_or(1, |(_, number)| number % ROTATING_SLOTS + 1)
+    }
+
+    /// Zaxnes Plus: the newest state among the first [`ROTATING_SLOTS`], if any.
+    fn newest_rotating_slot(&self) -> Option<i32> {
+        (1..=ROTATING_SLOTS)
+            .filter_map(|number| {
+                self.slots
+                    .find(&save_slots::numbered_slot_id(number))
+                    .filter(|record| record.is_occupied())
+                    .map(|record| (record.saved_at, number))
+            })
+            .max()
+            .map(|(_, number)| number)
+    }
+
     /// The quick save (REQ-LOOP-043): the quick slot, no thumbnail, and its notification.
+    ///
+    /// Zaxnes Plus: in the console interface (Android, handhelds) the save button writes the
+    /// next of 15 numbered slots in turn, with its picture, as RetroArch does.
     pub fn quick_save(&mut self) {
         if self.current_game.is_none() || self.state == EmulationState::Stopped {
+            return;
+        }
+        if self.console_interface {
+            let number = self.next_rotating_slot();
+            if self.save_to_slot(&save_slots::numbered_slot_id(number), true) {
+                self.notifications.show(
+                    &format!("State {number} saved"),
+                    DEFAULT_SECONDS,
+                    NotificationSeverity::Normal,
+                );
+            }
             return;
         }
         if self.save_to_slot(QUICK_SLOT_ID, false) {
@@ -224,6 +272,23 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
 
     /// The quick load (REQ-LOOP-045): loads the quick slot, with its notification.
     pub fn quick_load(&mut self) {
+        // Zaxnes Plus: the console's load button loads the newest of the 15 states.
+        if self.console_interface {
+            let Some(number) = self.newest_rotating_slot() else {
+                self.notifications
+                    .show("No saved state yet", DEFAULT_SECONDS, NotificationSeverity::Normal);
+                return;
+            };
+            self.load_slot(&save_slots::numbered_slot_id(number));
+            if self.loading {
+                self.notifications.show(
+                    &format!("State {number} loaded"),
+                    DEFAULT_SECONDS,
+                    NotificationSeverity::Normal,
+                );
+            }
+            return;
+        }
         if !self.slots.is_occupied(QUICK_SLOT_ID) {
             return;
         }
@@ -334,7 +399,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             return;
         }
         self.notifications
-            .show("Roll Back", SHORT_SECONDS, NotificationSeverity::Normal);
+            .show("Rewind", SHORT_SECONDS, NotificationSeverity::Normal);
         if let Some(snapshot) = self.rollback.take_rollback_target() {
             self.restore_snapshot(&snapshot);
         }

@@ -81,9 +81,11 @@ impl InputBindings {
     pub fn use_android_defaults(&mut self) {
         self.handheld = true;
         self.android = true;
+        // Zaxnes Plus: and the Android defaults from before its hotkeys.
         let former = [
             default_bindings::create_gamepad(true),
             default_bindings::create_handheld_gamepad(true),
+            default_bindings::create_former_android_gamepad(true),
         ];
         let android = default_bindings::create_android_gamepad(true);
         for (_, set) in &mut self.gamepads {

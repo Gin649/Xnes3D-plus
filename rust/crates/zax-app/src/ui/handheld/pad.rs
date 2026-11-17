@@ -35,10 +35,14 @@ pub enum PadButton {
     L2,
     /// The right trigger, pressed past half way.
     R2,
+    /// Zaxnes Plus: the left stick pressed in.
+    L3,
+    /// Zaxnes Plus: the right stick pressed in.
+    R3,
 }
 
 impl PadButton {
-    const COUNT: usize = 15;
+    const COUNT: usize = 17;
 
     pub const ALL: [Self; Self::COUNT] = [
         Self::Up,
@@ -56,6 +60,8 @@ impl PadButton {
         Self::Menu,
         Self::L2,
         Self::R2,
+        Self::L3,
+        Self::R3,
     ];
 
     const fn index(self) -> usize {

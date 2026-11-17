@@ -25,6 +25,8 @@ pub enum AndroidAction {
     ProfilesFolder = 4,
     /// Copy from that folder now.
     CopyProfiles = 5,
+    /// Pick the folder the battery saves and save states go to (used from the next start).
+    ChooseSavesFolder = 6,
 }
 
 /// The file Java writes the picked ROM folder to. Must match ZaxnesActivity.ROMS_FOLDER_FILE.

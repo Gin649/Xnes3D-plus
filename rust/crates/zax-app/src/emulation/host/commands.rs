@@ -61,7 +61,10 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
                 !loading && is_valid_slot_id(&slot) && self.slots.is_occupied(&slot)
             }
             Command::QuickSave => self.current_game.is_some() && !stopped && !loading,
-            Command::QuickLoad => !loading && self.slots.is_occupied(QUICK_SLOT_ID),
+            // Zaxnes Plus: the console's load button takes the newest of its 15 states.
+            Command::QuickLoad => {
+                !loading && (self.console_interface || self.slots.is_occupied(QUICK_SLOT_ID))
+            }
             Command::DeleteSlot => {
                 let slot = args
                     .text

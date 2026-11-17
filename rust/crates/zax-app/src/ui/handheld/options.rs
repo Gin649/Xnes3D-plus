@@ -239,9 +239,10 @@ pub const TOUCH_ROWS: [OptionRow; 15] = [
 pub const LIBRARY_TITLE: &str = "Games and 3D profiles";
 
 /// Zaxnes Plus: the rows of the games and profiles page, each carried out by Android.
-pub const LIBRARY_ROWS: [OptionRow; 7] = [
+pub const LIBRARY_ROWS: [OptionRow; 8] = [
     OptionRow::Group("Games"),
     OptionRow::Android(AndroidAction::ChooseRomFolder),
+    OptionRow::Android(AndroidAction::ChooseSavesFolder),
     OptionRow::Group("3D profiles"),
     OptionRow::Android(AndroidAction::Import3dSen),
     OptionRow::Android(AndroidAction::CommunityProfiles),
@@ -257,6 +258,7 @@ fn android_label(action: AndroidAction) -> String {
         AndroidAction::CommunityProfiles => "Get community profiles",
         AndroidAction::ProfilesFolder => "Profiles folder",
         AndroidAction::CopyProfiles => "Copy from the profiles folder now",
+        AndroidAction::ChooseSavesFolder => "Saves folder",
     }
     .to_owned()
 }
@@ -275,7 +277,9 @@ fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
                     .map_or(folder.clone(), |name| name.to_string_lossy().into_owned())
             }
         }
-        AndroidAction::Import3dSen | AndroidAction::ProfilesFolder => "Choose...".to_owned(),
+        AndroidAction::Import3dSen
+        | AndroidAction::ProfilesFolder
+        | AndroidAction::ChooseSavesFolder => "Choose...".to_owned(),
         AndroidAction::CommunityProfiles => "Download".to_owned(),
         AndroidAction::CopyProfiles => "Copy".to_owned(),
     }

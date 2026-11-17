@@ -76,15 +76,17 @@ const STATUS_BAR_BOTTOM_BAND: i32 = 176;
 /// The 3D settings of each kind.
 pub fn apply(kind: Kind, instance: &mut PatternInstance) {
     let (depth, layer) = match kind {
-        Kind::Sprite => (6, ZLayer::L1),
-        Kind::SpriteBehind => (3, ZLayer::L2),
+        // Zaxnes Plus, second tuning (owner request: stand out more): characters about twice as
+        // thick, solid scenery half as thick again, the backdrop one layer further back.
+        Kind::Sprite => (12, ZLayer::L1),
+        Kind::SpriteBehind => (4, ZLayer::L2),
         // Thin but still in front: small shapes such as the letters of a word are each a shape,
         // and some letters are sparse and some not, so moving the sparse ones back would break
         // words apart. Only large backdrops go to the back layers.
         Kind::Sparse => (2, ZLayer::L1),
-        Kind::Medium => (4, ZLayer::L1),
-        Kind::Solid => (8, ZLayer::L1),
-        Kind::Backdrop => (2, ZLayer::L3),
+        Kind::Medium => (6, ZLayer::L1),
+        Kind::Solid => (12, ZLayer::L1),
+        Kind::Backdrop => (2, ZLayer::L4),
         Kind::StatusBar => (1, ZLayer::L1),
     };
     instance.depth = depth;
