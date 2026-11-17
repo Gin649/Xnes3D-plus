@@ -3,12 +3,13 @@ name: Smart 3D preview
 # Renders the same moments of a game three ways, flat (2D), the default 3D (every shape alike)
 # and Smart 3D, side by side, to see and tune Smart 3D (zax-engine3d smart3d.rs) without a device.
 # The game is FlappyZaxNes, built from its GPL source in the repository, so no commercial ROM is
-# ever used here. The pictures are in the run's artifacts.
+# ever used here. The pictures are in the run's artifacts and on the smart3d-preview release
+# (replaced by each run).
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # to publish the pictures as the smart3d-preview release
 
 jobs:
   preview:
@@ -84,3 +85,12 @@ jobs:
         with:
           name: smart3d-preview
           path: ${{ runner.temp }}/preview/*.png
+
+      - name: Publish the pictures (smart3d-preview release, replaced each run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete smart3d-preview --yes --cleanup-tag 2>/dev/null || true
+          gh release create smart3d-preview "$RUNNER_TEMP"/preview/*.png --prerelease \
+            --target "${{ github.sha }}" --title "Smart 3D preview" \
+            --notes "FlappyZaxNes rendered flat, in the default 3D and in Smart 3D (left to right), at three moments and two camera angles. Made by the Smart 3D preview workflow; replaced each run."
