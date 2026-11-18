@@ -1071,11 +1071,23 @@ impl Running {
         {
             return;
         }
-        self.auto_loaded_for = Some(game);
+        self.auto_loaded_for = Some(game.clone());
         let slot = crate::persistence::save_slots::numbered_slot_id(
             crate::emulation::host::AUTO_SAVE_SLOT,
         );
         if !self.host.slots.is_occupied(&slot) {
+            return;
+        }
+        // Only this game's own auto save is loaded. Loading a slot starts the game the state
+        // was made with, so an auto save of another game (two ROMs whose files share a name
+        // share their save files) would replace the game just started with that one.
+        let same_game = self
+            .host
+            .slots
+            .find(&slot)
+            .is_some_and(|found| found.game_id == game);
+        if !same_game {
+            log("auto save skipped: it belongs to another game.");
             return;
         }
         let args = CommandArgs::of_number(crate::emulation::host::AUTO_SAVE_SLOT);
