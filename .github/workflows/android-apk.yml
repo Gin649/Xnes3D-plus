@@ -90,7 +90,11 @@ jobs:
         env:
           ZAXNES_ANDROID_KEYSTORE: ${{ github.workspace }}/rust/build/android/fork.keystore
           ZAXNES_ANDROID_KEYSTORE_PASSWORD: android
-        run: python3 -I build/package-android.py
+        # Xnes3D+: rust/target-android is cached between runs, so the APKs of earlier builds
+        # come back with it. Clear them first, so only this build's APK is uploaded and released.
+        run: |
+          rm -rf target-android/package
+          python3 -I build/package-android.py
 
       - uses: actions/upload-artifact@v4
         with:
@@ -104,7 +108,10 @@ jobs:
           version=$(tr -d '[:space:]' < .github/fork/VERSION)
           zaxnes=$(grep -m1 '^version = ' rust/Cargo.toml | cut -d'"' -f2)
           tag="v${version}"
-          apk=$(ls rust/target-android/package/*.apk | head -1)
+          # The APK this build made (package-android.py names it after the version), never an
+          # older one.
+          apk="rust/target-android/package/Zaxnes-${version}-android-arm64.apk"
+          test -f "$apk"
           cp "$apk" "Xnes3D-plus-${version}-android-arm64.apk"
           gh release create "$tag" "Xnes3D-plus-${version}-android-arm64.apk" --latest \
             --target "${{ github.sha }}" --title "Xnes3D+ v${version}" \
