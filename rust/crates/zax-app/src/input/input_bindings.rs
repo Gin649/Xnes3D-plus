@@ -86,6 +86,7 @@ impl InputBindings {
             default_bindings::create_gamepad(true),
             default_bindings::create_handheld_gamepad(true),
             default_bindings::create_former_android_gamepad(true),
+            default_bindings::create_android_gamepad_by_labels(true),
         ];
         let android = default_bindings::create_android_gamepad(true);
         for (_, set) in &mut self.gamepads {

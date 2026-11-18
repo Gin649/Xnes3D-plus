@@ -271,12 +271,32 @@ pub fn create_former_android_gamepad(standard: bool) -> BindingSet {
     set
 }
 
-/// The gamepad set of the Android package. Xnes3D+: the handheld defaults, with the
-/// shoulders and the left trigger as RetroArch players expect them: L2 rewinds (held), R2 fast
-/// forwards, R1 saves a state and L1 loads the newest one. Zoom stays on a pinch of the screen,
-/// and both sticks pressed in open the menu (the handheld interface, not a binding).
+/// The gamepad set of the Android package. Xnes3D+: the handheld defaults, with the face
+/// buttons where the handheld has them (NES A on the right button, which the AYN Thor labels A
+/// and reports as the pad's east one; NES B on the bottom one), and the shoulders and the left
+/// trigger as RetroArch players expect them: L2 rewinds (held), R2 fast forwards, R1 saves a
+/// state and L1 loads the newest one. Zoom stays on a pinch of the screen, and both sticks
+/// pressed in open the menu (the handheld interface, not a binding).
 #[must_use]
 pub fn create_android_gamepad(standard: bool) -> BindingSet {
+    let mut set = create_android_gamepad_by_labels(standard);
+    if standard {
+        set.set_action(
+            InputAction::A,
+            PhysicalControl::button(standard_gamepad::EAST),
+        );
+        set.set_action(
+            InputAction::B,
+            PhysicalControl::button(standard_gamepad::SOUTH),
+        );
+    }
+    set
+}
+
+/// Xnes3D+: the Android set up to v1.0.0, with NES A and B on the pad's A and B labels, which
+/// the AYN Thor swaps. What a pad saved then still has, so it moves to [`create_android_gamepad`].
+#[must_use]
+pub fn create_android_gamepad_by_labels(standard: bool) -> BindingSet {
     let mut set = create_handheld_gamepad(standard);
     if standard {
         set.clear(&BindingTarget::of(InputAction::ZOOM_IN));

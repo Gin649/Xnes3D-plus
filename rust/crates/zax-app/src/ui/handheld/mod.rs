@@ -105,7 +105,14 @@ struct ControlsState {
     selected: usize,
     /// Seconds left to the binding being captured, when one is.
     capture_left: Option<f32>,
+    /// Xnes3D+: seconds during which presses are ignored after a capture ends. The capture
+    /// reads the button before the screen does, so without this the button just bound was
+    /// also taken as a press of the screen: B left the list, A started another capture.
+    after_capture: f32,
 }
+
+/// Xnes3D+: how long presses are ignored once a capture ends.
+const AFTER_CAPTURE_SECONDS: f32 = 0.3;
 
 /// The handheld interface.
 pub struct HandheldUi {
@@ -790,6 +797,7 @@ impl HandheldUi {
 
     /// A binding that waits too long is given up.
     fn update_capture(&mut self, seconds: f32, frame: &mut UiFrame<'_>) {
+        self.controls.after_capture = (self.controls.after_capture - seconds).max(0.0);
         let Some(left) = self.controls.capture_left else {
             return;
         };
@@ -798,6 +806,9 @@ impl HandheldUi {
         self.controls.capture_left = (listening && left > 0.0).then_some(left);
         if listening && left <= 0.0 {
             frame.input.edit(|_, _, session| session.stop());
+        }
+        if self.controls.capture_left.is_none() {
+            self.controls.after_capture = AFTER_CAPTURE_SECONDS;
         }
     }
 
@@ -824,6 +835,9 @@ impl HandheldUi {
             return;
         }
         // The press that ends a capture bound the button: it is not a press of the screen.
+        if self.screen == Screen::Controls && self.controls.after_capture > 0.0 {
+            return;
+        }
         if self.screen == Screen::Controls && self.controls.capture_left.is_some() {
             if button == PadButton::Menu {
                 frame.input.edit(|_, _, session| session.stop());

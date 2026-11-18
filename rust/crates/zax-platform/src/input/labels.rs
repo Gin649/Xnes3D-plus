@@ -73,6 +73,21 @@ fn key_label(code: i32) -> String {
 }
 
 fn button_label(code: i32) -> String {
+    // Xnes3D+: on Android the face buttons are named as the AYN Thor prints them. It reports
+    // them by place (its A, on the right, as the pad's east button), so the place names below
+    // would call its A button "B".
+    if cfg!(target_os = "android") {
+        let printed = match code {
+            pad::EAST => Some("A"),
+            pad::SOUTH => Some("B"),
+            pad::NORTH => Some("X"),
+            pad::WEST => Some("Y"),
+            _ => None,
+        };
+        if let Some(name) = printed {
+            return name.to_owned();
+        }
+    }
     match code {
         pad::SOUTH => "South (A)",
         pad::EAST => "East (B)",

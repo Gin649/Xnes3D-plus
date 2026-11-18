@@ -298,11 +298,12 @@ fn retroarch_extras(pad: &dyn GamepadDevice, frames: u32) -> InputAction {
         }
     }
     if frames % 4 < 2 {
-        // The X label (the top button on the AYN Thor) is turbo A, the Y label turbo B.
-        if held(PhysicalControl::button(gamepad::WEST)) {
+        // X (the top button on the AYN Thor, which the pad reports as its north one) is turbo
+        // A, and Y (the left one, west) turbo B.
+        if held(PhysicalControl::button(gamepad::NORTH)) {
             mask |= InputAction::A;
         }
-        if held(PhysicalControl::button(gamepad::NORTH)) {
+        if held(PhysicalControl::button(gamepad::WEST)) {
             mask |= InputAction::B;
         }
     }
