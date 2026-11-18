@@ -248,6 +248,8 @@ pub const LIBRARY_ROWS: [OptionRow; 8] = [
     OptionRow::Android(AndroidAction::CommunityProfiles),
     OptionRow::Android(AndroidAction::ProfilesFolder),
     OptionRow::Android(AndroidAction::CopyProfiles),
+    OptionRow::Group("Xnes3D+"),
+    OptionRow::Android(AndroidAction::CheckUpdates),
 ];
 
 /// Xnes3D+: the label of an Android row.
@@ -259,6 +261,7 @@ fn android_label(action: AndroidAction) -> String {
         AndroidAction::ProfilesFolder => "Profiles folder",
         AndroidAction::CopyProfiles => "Copy from the profiles folder now",
         AndroidAction::ChooseSavesFolder => "Saves folder",
+        AndroidAction::CheckUpdates => "Check for updates",
     }
     .to_owned()
 }
@@ -288,6 +291,7 @@ fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
         AndroidAction::Import3dSen | AndroidAction::ProfilesFolder => "Choose...".to_owned(),
         AndroidAction::CommunityProfiles => "Download".to_owned(),
         AndroidAction::CopyProfiles => "Copy".to_owned(),
+        AndroidAction::CheckUpdates => format!("v{}", crate::android_bridge::app_version()),
     }
 }
 

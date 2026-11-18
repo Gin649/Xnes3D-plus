@@ -18,6 +18,8 @@
     <!-- Xnes3D+: the game list reads the player's own ROM folder, wherever it is. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Xnes3D+: Options > Check for updates hands the new APK to Android's installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="Zaxnes"

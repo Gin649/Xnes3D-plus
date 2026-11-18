@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -43,7 +44,9 @@ public class ProfilesActivity extends Activity {
     static final int ACTION_PROFILES_FOLDER = 4;
     static final int ACTION_COPY_PROFILES = 5;
     static final int ACTION_SAVES_FOLDER = 6;
-    static final int LAST_ACTION = ACTION_SAVES_FOLDER;
+    /** Xnes3D+: Options > Check for updates. */
+    static final int ACTION_UPDATES = 7;
+    static final int LAST_ACTION = ACTION_UPDATES;
 
     /** Where the saves folder is kept; ZaxnesActivity passes it to the native side as --saves. */
     static final String PREFS = "zaxnes_plus";
@@ -66,6 +69,9 @@ public class ProfilesActivity extends Activity {
     /** Waiting for the player to come back from the "All files access" settings page. */
     private boolean waitingForAllFiles;
 
+    /** Xnes3D+: the update waiting for the "Install unknown apps" switch, if any. */
+    private AppUpdate.Release waitingToInstall;
+
     /**
      * zax-android: converts the 3dSen bundle file at {@code bundle} into .3dn profiles in the
      * folder {@code profiles}, as File > Import from 3dSen does. Returns "ok" or "failed" on the
@@ -76,6 +82,11 @@ public class ProfilesActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Xnes3D+: Android's installer reporting on an update.
+        if (AppUpdate.STATUS_ACTION.equals(getIntent().getAction())) {
+            installStatus(getIntent());
+            return;
+        }
         if (savedInstanceState != null) return; // a picker is already open
         if (handleSharedFiles(getIntent())) return;
         switch (getIntent().getIntExtra(EXTRA_ACTION, 0)) {
@@ -85,6 +96,7 @@ public class ProfilesActivity extends Activity {
             case ACTION_PROFILES_FOLDER: pickFolder(); break;
             case ACTION_COPY_PROFILES: copyNow(); break;
             case ACTION_SAVES_FOLDER: forSaves = true; chooseRomFolder(); break;
+            case ACTION_UPDATES: checkForUpdates(); break;
             default: finish();
         }
     }
@@ -92,6 +104,17 @@ public class ProfilesActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (waitingToInstall != null) {
+            AppUpdate.Release release = waitingToInstall;
+            waitingToInstall = null;
+            if (canInstall()) {
+                downloadAndInstall(release);
+            } else {
+                showResult("Update not installed",
+                    "Xnes3D+ needs \"Install unknown apps\" to install its own updates. "
+                        + "You can try again from Options > Games and 3D profiles.");
+            }
+        }
         if (waitingForAllFiles) {
             waitingForAllFiles = false;
             if (canReadStorage()) {
@@ -357,6 +380,159 @@ public class ProfilesActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    // ---- updates (Xnes3D+) ------------------------------------------------------------------
+
+    private void checkForUpdates() {
+        final String installed = AppUpdate.installed(this);
+        final AlertDialog working = dialog()
+            .setTitle("Checking for updates...")
+            .setMessage("Asking GitHub for the newest Xnes3D+.")
+            .setCancelable(false)
+            .show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                AppUpdate.Release found = null;
+                String error = null;
+                try {
+                    found = AppUpdate.latest();
+                } catch (Exception e) {
+                    error = e.getMessage() == null ? "Check your internet connection." : e.getMessage();
+                }
+                final AppUpdate.Release release = found;
+                final String problem = error;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        working.dismiss();
+                        if (release == null) {
+                            showResult("Couldn't check for updates", problem);
+                        } else if (!AppUpdate.newer(release.version, installed)) {
+                            showResult("Xnes3D+ is up to date", "You have the newest version, v" + installed + ".");
+                        } else {
+                            offer(release, installed);
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void offer(final AppUpdate.Release release, String installed) {
+        String notes = release.notes == null ? "" : release.notes.trim();
+        if (notes.length() > 600) notes = notes.substring(0, 600) + "...";
+        dialog()
+            .setTitle("Xnes3D+ v" + release.version + " is available")
+            .setMessage("You have v" + installed + "." + (notes.isEmpty() ? "" : "\n\n" + notes))
+            .setPositiveButton("Install", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    startInstall(release);
+                }
+            })
+            .setNegativeButton("Not now", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
+            .show();
+    }
+
+    /** Whether Android lets Xnes3D+ hand an APK to its installer ("Install unknown apps"). */
+    private boolean canInstall() {
+        return Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
+    }
+
+    private void startInstall(final AppUpdate.Release release) {
+        if (canInstall()) {
+            downloadAndInstall(release);
+            return;
+        }
+        dialog()
+            .setTitle("One switch first")
+            .setMessage("To install its own updates, Xnes3D+ needs \"Install unknown apps\". "
+                + "Turn it on for Xnes3D+ on the next screen, then come back.")
+            .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface d, int w) {
+                    waitingToInstall = release;
+                    try {
+                        startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + getPackageName())));
+                    } catch (Exception e) {
+                        waitingToInstall = null;
+                        showResult("Update not installed", "Android's settings page couldn't be opened.");
+                    }
+                }
+            })
+            .setNegativeButton("Not now", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
+            .show();
+    }
+
+    private void downloadAndInstall(final AppUpdate.Release release) {
+        final File apk = new File(new File(getCacheDir(), "update"), "Xnes3D-plus.apk");
+        final AlertDialog working = dialog()
+            .setTitle("Downloading Xnes3D+ v" + release.version)
+            .setMessage("0%")
+            .setCancelable(false)
+            .show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String error = null;
+                try {
+                    AppUpdate.download(release, apk, new AppUpdate.Progress() {
+                        @Override
+                        public void at(final int percent) {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    working.setMessage(percent + "%");
+                                }
+                            });
+                        }
+                    });
+                    AppUpdate.install(ProfilesActivity.this, apk);
+                } catch (Exception e) {
+                    error = e.getMessage() == null ? "Check your internet connection." : e.getMessage();
+                }
+                final String problem = error;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        working.dismiss();
+                        if (problem != null) {
+                            showResult("Update not installed", problem);
+                        }
+                        // Otherwise Android's installer takes over; its answer comes back here.
+                    }
+                });
+            }
+        }).start();
+    }
+
+    /** Android's installer reporting on an update: asks the player to confirm, or tells why not. */
+    private void installStatus(Intent intent) {
+        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirm = (Intent) intent.getParcelableExtra(Intent.EXTRA_INTENT);
+            if (confirm != null) {
+                try {
+                    startActivity(confirm);
+                } catch (Exception e) {
+                    showResult("Update not installed", "Android's installer couldn't be opened.");
+                    return;
+                }
+            }
+            finish();
+        } else if (status == PackageInstaller.STATUS_SUCCESS) {
+            finish();
+        } else if (status == PackageInstaller.STATUS_FAILURE_ABORTED) {
+            finish(); // the player said no
+        } else {
+            String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+            showResult("Update not installed", message == null ? "Android refused the update." : message);
+        }
     }
 
     // ---- profiles folder --------------------------------------------------------------------

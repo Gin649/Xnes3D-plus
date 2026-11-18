@@ -1241,7 +1241,17 @@ impl HandheldUi {
                 let preset = self.overlay.step_camera(step);
                 apply_camera(preset, frame.host);
             }
-            OptionsCommand::Android(action) => self.ask_android(action),
+            OptionsCommand::Android(action) => {
+                // Xnes3D+: installing an update closes the app, so a game being played gets its
+                // auto save first, as when it is left.
+                if action == crate::android_bridge::AndroidAction::CheckUpdates {
+                    let args = CommandArgs::of_number(crate::emulation::host::AUTO_SAVE_SLOT);
+                    if frame.host.can_execute(Command::SaveSlot, &args) {
+                        frame.host.enqueue(Command::SaveSlot, args);
+                    }
+                }
+                self.ask_android(action);
+            }
         }
     }
 

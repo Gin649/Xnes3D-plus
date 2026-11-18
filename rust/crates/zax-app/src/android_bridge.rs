@@ -27,6 +27,14 @@ pub enum AndroidAction {
     CopyProfiles = 5,
     /// Pick the folder the battery saves and save states go to (used from the next start).
     ChooseSavesFolder = 6,
+    /// Look for a newer Xnes3D+ release and offer to install it.
+    CheckUpdates = 7,
+}
+
+/// The Xnes3D+ version this build is (`.github/fork/VERSION`), shown beside Check for updates.
+#[must_use]
+pub fn app_version() -> &'static str {
+    include_str!("../../../../.github/fork/VERSION").trim()
 }
 
 /// The file Java writes the picked ROM folder to. Must match ZaxnesActivity.ROMS_FOLDER_FILE.
