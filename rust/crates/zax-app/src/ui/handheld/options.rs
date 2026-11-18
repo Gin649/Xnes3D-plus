@@ -239,7 +239,7 @@ pub const TOUCH_ROWS: [OptionRow; 14] = [
 pub const LIBRARY_TITLE: &str = "Games and 3D profiles";
 
 /// Xnes3D+: the rows of the games and profiles page, each carried out by Android.
-pub const LIBRARY_ROWS: [OptionRow; 8] = [
+pub const LIBRARY_ROWS: [OptionRow; 10] = [
     OptionRow::Group("Games"),
     OptionRow::Android(AndroidAction::ChooseRomFolder),
     OptionRow::Android(AndroidAction::ChooseSavesFolder),
