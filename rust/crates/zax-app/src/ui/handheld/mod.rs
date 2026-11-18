@@ -1455,10 +1455,8 @@ impl HandheldUi {
                     );
                 }
             }
-            // Started by a frontend: quitting the game goes back to it, not to the ROM list.
-            OverlayCommand::QuitToList if crate::launch_origin::from_frontend() => {
-                host.enqueue(Command::Quit, CommandArgs::default());
-            }
+            // Xnes3D+ (owner request): the game list, even when a launcher started the game.
+            // "Quit" is the way back to a launcher.
             OverlayCommand::QuitToList => {
                 host.enqueue(Command::Stop, CommandArgs::default());
                 self.show_home(host);
