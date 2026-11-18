@@ -113,6 +113,9 @@ jobs:
           apk="rust/target-android/package/Zaxnes-${version}-android-arm64.apk"
           test -f "$apk"
           cp "$apk" "Xnes3D-plus-${version}-android-arm64.apk"
+          # A tag left behind by a deleted release (the first step made sure no release uses
+          # it) is removed, so the new release's tag points at this build.
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${tag}" 2> /dev/null || true
           gh release create "$tag" "Xnes3D-plus-${version}-android-arm64.apk" --latest \
             --target "${{ github.sha }}" --title "Xnes3D+ v${version}" \
             --notes "Xnes3D+, a 3D NES emulator for Android built on nixxou's Zaxnes ${zaxnes}: an NES look, your own ROM and saves folders, RetroArch-style hotkeys (L2 rewind, R2 fast forward, R1 save, L1 load, L3+R3 menu), 15 rotating save states and an auto save, 3D profiles from its own menus, and Smart 3D for games without a profile. Installs beside the official Zaxnes. Based on nixxou/zaxnes, GPL-3.0. Interface font: Pixelify Sans (SIL Open Font License)."
