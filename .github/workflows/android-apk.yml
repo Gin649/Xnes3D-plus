@@ -9,6 +9,13 @@ name: Android APK
 # its profiles and saves. That key is only for this personal fork.
 on:
   workflow_dispatch:
+    inputs:
+      test_build:
+        # Xnes3D+: a test build makes the APK and keeps it on the run's page only (Artifacts),
+        # with no version check and no release, so nobody is offered it as an update.
+        description: 'Test build (no release, APK only in the run artifacts)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write # to publish the APK as a release
@@ -23,6 +30,7 @@ jobs:
       # Xnes3D+: each build is a release named after .github/fork/VERSION. Stop at once, before
       # the long build, when that version was already released: raise the version first.
       - name: The version is new
+        if: ${{ !inputs.test_build }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -98,10 +106,11 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Zaxnes-android-fork
+          name: ${{ inputs.test_build && format('Xnes3D-plus-test-{0}', github.ref_name) || 'Zaxnes-android-fork' }}
           path: rust/target-android/package/*.apk
 
       - name: Publish it as a release
+        if: ${{ !inputs.test_build }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
