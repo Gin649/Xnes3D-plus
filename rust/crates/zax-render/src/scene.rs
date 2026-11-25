@@ -250,6 +250,30 @@ impl BackdropState {
     }
 }
 
+/// The smooth scrolling of the 3D scene between two frames ([`SceneState::three_d_shift`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ThreeDShift {
+    /// How far to move the band's tiles left, in scene units.
+    pub amount: f32,
+    /// The screen lines of the band, `start..end`: a tile whose top line is outside stays (the
+    /// status bar).
+    pub start: i32,
+    /// See `start`.
+    pub end: i32,
+    /// The sprites that move with the camera (their slots, `FrameTile::ord`): they stay.
+    pub steady: Vec<i32>,
+}
+
+impl ThreeDShift {
+    /// The move of a tile at screen line `y`, of sprite slot `ord` (−1 for the background), not
+    /// in the HUD: `amount`, or nothing when it stays.
+    #[must_use]
+    pub fn of_tile(&self, y: i32, ord: i32) -> Option<f32> {
+        let steady = ord >= 0 && self.steady.contains(&ord);
+        ((self.start..self.end).contains(&y) && !steady).then_some(self.amount)
+    }
+}
+
 /// The state of the scene the host keeps from frame to frame: the settings, the camera, the
 /// clip margins, the light and the backdrop.
 ///
@@ -322,6 +346,10 @@ pub struct SceneState {
     /// a picture of the 2D picture's size, transparent (`interop::HIDDEN_PIXEL`) elsewhere, or
     /// empty.
     pub picture_overlay: Vec<u8>,
+    /// The experimental smooth scrolling in 3D (owner request, 2026-11-20): the tiles of the
+    /// playfield band slid along the camera's motion between two frames, as the 2D picture's
+    /// playfield is; `None` without it.
+    pub three_d_shift: Option<ThreeDShift>,
     /// The shape the subjective camera follows, or `None` (REQ-SCN-021). In FPV it decides
     /// which tiles count as occluders and are drawn at half opacity (REQ-SCN-022).
     pub followed_shape: Option<ShapeId>,
@@ -355,6 +383,7 @@ impl Default for SceneState {
             picture_framed: false,
             picture_shift: None,
             picture_overlay: Vec::new(),
+            three_d_shift: None,
             followed_shape: None,
             real_time: 0.0,
             emulated_time: 0.0,
@@ -488,6 +517,57 @@ pub struct SceneFrame<'a> {
     pub nes_picture: &'a [u8],
     /// The rows of `nes_picture`: 240, more with a vertical widescreen margin (0 reads as 240).
     pub nes_picture_height: usize,
+    /// The colour emphasis of each pixel of `nes_picture` (PPUMASK bits 5-7 as 0 to 7), laid out
+    /// as the picture; empty for a frame without emphasis, which costs the upload nothing (lot
+    /// FIDPLUS-D2b).
+    pub nes_picture_emphasis: &'a [u8],
+    /// The picture already decoded to colours, three bytes (R, G, B) a pixel laid out as
+    /// `nes_picture`, which then only gives the opacity: the composite decoder's output (lot
+    /// FIDPLUS-D2b step 2). Empty: the palette (with `nes_picture_emphasis`) gives the colours.
+    pub nes_picture_rgb: &'a [u8],
+}
+
+impl SceneFrame<'_> {
+    /// How the picture's pixels get their colours.
+    #[must_use]
+    pub const fn picture_colours(&self) -> PictureColours<'_> {
+        PictureColours {
+            emphasis: self.nes_picture_emphasis,
+            rgb: self.nes_picture_rgb,
+        }
+    }
+}
+
+/// What colours the NES picture beside its colour indices (lot FIDPLUS-D2b): each pixel's
+/// emphasis, or the whole picture already decoded to R, G, B. Both empty: the palette alone.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PictureColours<'a> {
+    /// PPUMASK bits 5-7 as 0 to 7 per pixel, or empty.
+    pub emphasis: &'a [u8],
+    /// Three bytes a pixel, or empty; wins over `emphasis`.
+    pub rgb: &'a [u8],
+}
+
+impl PictureColours<'_> {
+    /// The colour of pixel `at` of colour index `index`.
+    #[must_use]
+    pub fn color(&self, at: usize, index: u8) -> zax_engine3d::palette::Rgb24 {
+        if let Some(rgb) = self.rgb.get(at * 3..at * 3 + 3) {
+            return zax_engine3d::palette::Rgb24::new(rgb[0], rgb[1], rgb[2]);
+        }
+        match self.emphasis.get(at) {
+            Some(&bits) if bits != 0 => {
+                zax_engine3d::palette::nes_color_emphasized(usize::from(index & 0x3F), bits)
+            }
+            _ => zax_engine3d::palette::nes_color(usize::from(index & 0x3F)),
+        }
+    }
+
+    /// Whether the palette alone colours the picture.
+    #[must_use]
+    pub const fn plain(&self) -> bool {
+        self.emphasis.is_empty() && self.rgb.is_empty()
+    }
 }
 
 impl<'a> SceneFrame<'a> {
@@ -498,6 +578,8 @@ impl<'a> SceneFrame<'a> {
             draw_list: Some(draw_list),
             nes_picture: &[],
             nes_picture_height: 0,
+            nes_picture_emphasis: &[],
+            nes_picture_rgb: &[],
         }
     }
 }

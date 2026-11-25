@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.1"
 edition = "2021"
 rust-version = "1.85"
 license = "GPL-3.0-only"
@@ -39,7 +39,18 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# The libretro core (zax-libretro), a cdylib: cargo builds its dependencies to machine code rather
+# than LTO bitcode, and rustc 1.99.1 crashes (access violation in LLVM) generating zax-engine3d's
+# at opt-level 3. cargo build --profile libretro -p zax-libretro.
+[profile.libretro]
+inherits = "release"
+
+[profile.libretro.package.zax-engine3d]
+opt-level = 2
+
 # librashader-runtime-wgpu with the naga module handed to wgpu directly (Mega Bezel), see
 # vendor/librashader-runtime-wgpu/README.md.
 [patch.crates-io]
 librashader-runtime-wgpu = { path = "vendor/librashader-runtime-wgpu" }
+# The 7z decoder without wasm-bindgen on Emscripten (vendor/sevenz-rust2/ZAXNES-PATCH.md).
+sevenz-rust2 = { path = "vendor/sevenz-rust2" }

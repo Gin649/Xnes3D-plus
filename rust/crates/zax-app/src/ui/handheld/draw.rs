@@ -29,6 +29,10 @@ use crate::ui::menu_bar;
 use crate::ui::zax_ui::{UiFrame, ZaxUi};
 use crate::ui::{key_config, keys, strings, text};
 
+/// The track of a list's scrollbar.
+const SCROLL_TRACK: [f32; 4] = [1.0, 1.0, 1.0, 0.10];
+/// Its thumb: the rows shown.
+const SCROLL_THUMB: [f32; 4] = [1.0, 1.0, 1.0, 0.45];
 const BACKGROUND: [f32; 4] = [0.03, 0.03, 0.06, 1.0];
 const PANEL: [f32; 4] = [0.05, 0.05, 0.09, 0.96];
 const TEXT: [f32; 4] = [0.96, 0.96, 0.96, 1.0];
@@ -136,6 +140,34 @@ struct Painter<'ui> {
     hold_ring: Option<(&'static str, f32)>,
     /// How many lines the hints drawn took, for the sizes of the next frame.
     hint_lines: &'ui Cell<u8>,
+    /// How much lower the next rows lie, for the rows drawn on two lines above them.
+    lift: Cell<f32>,
+    /// How far right the rows start: the room of the list's scrollbar, when it has one.
+    inset: Cell<f32>,
+    /// The rank of the first row of the list drawn (group titles not counted), and how many
+    /// titles it drew so far: the rank of each row's zone.
+    rank_base: Cell<usize>,
+    titles: Cell<usize>,
+    /// The rank of the selected row of the list drawn, for the clicks.
+    focus_rank: &'ui Cell<Option<usize>>,
+    /// The rows it shows and how many a selection can rest on, for Page Up and Page Down.
+    list_span: &'ui Cell<(usize, usize)>,
+    /// The first row the scrollbar, the wheel or a finger scrolled the list to; none while the
+    /// list follows its selection (owner request).
+    view_first: Option<usize>,
+}
+
+/// One row of a list, as a screen describes it before the painter lays the list out.
+enum RowSpec {
+    /// A group title (RO-3).
+    Group(String),
+    /// A label, badges and a value in its colour.
+    Row {
+        left: String,
+        badges: Vec<(&'static str, [f32; 4])>,
+        right: String,
+        colour: [f32; 4],
+    },
 }
 
 impl Painter<'_> {
@@ -191,7 +223,173 @@ impl Painter<'_> {
     /// The top of the row `slot` of a list that starts under the title.
     fn row_top(&self, slot: usize) -> f32 {
         let slots = f32::from(u16::try_from(slot).unwrap_or(u16::MAX));
-        self.metrics.title_band() + self.metrics.padding * 0.5 + slots * self.metrics.row
+        self.metrics.title_band()
+            + self.metrics.padding * 0.5
+            + slots * self.metrics.row
+            + self.lift.get()
+    }
+
+    /// The step from a label to its value set under it (owner request): a line of text, closer
+    /// than the next row.
+    fn wrap_step(&self) -> f32 {
+        (self.metrics.font + self.metrics.padding * 0.3).round()
+    }
+
+    /// Whether `left`, its `badges` and `right` overflow a row from `x0` to `x1`: the value then
+    /// goes under the label.
+    fn wraps(
+        &self,
+        left: &str,
+        badges: &[(&str, [f32; 4])],
+        right: &str,
+        (x0, x1): (f32, f32),
+    ) -> bool {
+        if left.is_empty() || right.is_empty() {
+            return false;
+        }
+        let padding = self.metrics.padding;
+        let badges: f32 = badges
+            .iter()
+            .map(|(badge, _)| self.width(badge) + padding)
+            .sum();
+        x0 + padding + self.width(left) + padding + badges + self.width(right) + padding > x1
+    }
+
+    /// The height of a row, on one line or on two.
+    fn row_height(&self, wrapped: bool) -> f32 {
+        self.metrics.row + if wrapped { self.wrap_step() } else { 0.0 }
+    }
+
+    /// The first row of a list of `total` rows, `rows` of them shown, its selection `selected`:
+    /// where the scrollbar put it, else round the selection. Draws the scrollbar, and records
+    /// the ranks of the rows the list draws.
+    fn window(&self, selected: usize, rows: usize, total: usize) -> usize {
+        let first = self.view_first.map_or_else(
+            || first_visible(selected, rows, total),
+            |first| first.min(total.saturating_sub(rows)),
+        );
+        self.rank_base.set(first);
+        self.titles.set(0);
+        self.focus_rank.set(Some(selected));
+        self.list_span.set((rows, total));
+        self.scrollbar(first, rows, total);
+        first
+    }
+
+    /// The scrollbar of a list longer than the screen, on its left (owner request): the track
+    /// over the list's height and the thumb of the rows shown. The rows start after it.
+    fn scrollbar(&self, first: usize, rows: usize, total: usize) {
+        if rows == 0 || total <= rows {
+            self.inset.set(0.0);
+            return;
+        }
+        let metrics = &self.metrics;
+        // Four times the first width (owner request): wide enough for a finger.
+        let width = (metrics.padding * 2.0).max(24.0).round();
+        let left = (metrics.padding * 0.25).round();
+        let top = metrics.title_band() + metrics.padding * 0.5;
+        let room = self.list_room();
+        let bottom = top + room;
+        self.list
+            .add_rect([left, top], [left + width, bottom], SCROLL_TRACK)
+            .filled(true)
+            .rounding(width * 0.5)
+            .build();
+        #[allow(clippy::cast_precision_loss)] // A list of a few thousand rows at most.
+        let (thumb, offset) = {
+            let thumb = (room * rows as f32 / total as f32).max(room * 0.05);
+            let hidden = (total - rows) as f32;
+            (
+                thumb,
+                (room - thumb) * first.min(total - rows) as f32 / hidden,
+            )
+        };
+        self.list
+            .add_rect(
+                [left, top + offset],
+                [left + width, top + offset + thumb],
+                SCROLL_THUMB,
+            )
+            .filled(true)
+            .rounding(width * 0.5)
+            .build();
+        self.zone(
+            [0.0, top],
+            [left + width + left, bottom],
+            ZoneAction::Scrollbar { first, rows, total },
+        );
+        self.inset.set(width + left);
+    }
+
+    /// The pixels a list has between the title and the hints.
+    fn list_room(&self) -> f32 {
+        self.size[1] - self.metrics.title_band() - self.metrics.hint_band() - self.metrics.padding
+    }
+
+    /// The height `spec` takes on a full-width row.
+    fn spec_height(&self, spec: &RowSpec) -> f32 {
+        match spec {
+            RowSpec::Group(_) => self.metrics.row,
+            RowSpec::Row {
+                left,
+                badges,
+                right,
+                ..
+            } => {
+                let span = (
+                    self.metrics.padding * 0.5,
+                    self.size[0] - self.metrics.padding * 0.5,
+                );
+                self.row_height(self.wraps(left, badges, right, span))
+            }
+        }
+    }
+
+    /// Draws the window of `specs` that shows `selected`, in `room` pixels (the whole list's room
+    /// unless something takes some of it), rows of two lines included.
+    fn spec_list(&self, specs: &[RowSpec], selected: usize, room: f32) {
+        let heights: Vec<f32> = specs.iter().map(|spec| self.spec_height(spec)).collect();
+        let rows = self.metrics.visible_rows(self.size[1]);
+        // Scrolled (owner request): the rows from there, the end of the list kept full.
+        let (first, count) = if let Some(first) = self.view_first {
+            let first = first.min(specs.len().saturating_sub(1));
+            layout::list_window(&heights, first, room, first)
+        } else {
+            let start = first_visible(selected, rows, specs.len());
+            layout::list_window(&heights, selected, room, start)
+        };
+        let titles_before = |index: usize| {
+            specs[..index.min(specs.len())]
+                .iter()
+                .filter(|spec| matches!(spec, RowSpec::Group(_)))
+                .count()
+        };
+        self.rank_base.set(first - titles_before(first));
+        self.titles.set(0);
+        self.focus_rank
+            .set(Some(selected.saturating_sub(titles_before(selected))));
+        self.list_span
+            .set((count, specs.len() - titles_before(specs.len())));
+        self.scrollbar(first, count, specs.len());
+        let x1 = self.size[0] - self.metrics.padding * 0.5;
+        for (slot, (index, spec)) in specs.iter().enumerate().skip(first).take(count).enumerate() {
+            match spec {
+                RowSpec::Group(title) => self.group_row(slot, title),
+                RowSpec::Row {
+                    left,
+                    badges,
+                    right,
+                    colour,
+                } => self.row_parts(
+                    slot,
+                    (index == selected, FOCUS),
+                    left,
+                    badges,
+                    (right, *colour),
+                    x1,
+                ),
+            }
+        }
     }
 
     /// One row of a list: `left` clipped to leave room for `right`.
@@ -238,11 +436,17 @@ impl Painter<'_> {
     ) {
         let metrics = &self.metrics;
         let top = self.row_top(slot);
-        let x0 = metrics.padding * 0.5;
+        let x0 = metrics.padding * 0.5 + self.inset.get();
+        // Owner request: a value that does not fit beside its label goes under it.
+        let wrapped = self.wraps(left, badges, right.0, (x0, x1));
+        let height = self.row_height(wrapped);
+        if wrapped {
+            self.lift.set(self.lift.get() + self.wrap_step());
+        }
         if selected {
             // Square corners: the pixel look of the fork.
             self.list
-                .add_rect([x0, top], [x1, top + metrics.row], focus)
+                .add_rect([x0, top], [x1, top + height], focus)
                 .filled(true)
                 .build();
         } else {
@@ -262,21 +466,30 @@ impl Painter<'_> {
             (TEXT, right.1)
         };
         let right_width = self.width(right.0);
-        let right_x = x1 - metrics.padding - right_width;
+        let (right_x, right_y) = if wrapped {
+            (x0 + metrics.padding * 2.0, y + self.wrap_step())
+        } else {
+            (x1 - metrics.padding - right_width, y)
+        };
         if !right.0.is_empty() {
-            self.text(right_x, y, side, right.0);
+            self.text(right_x, right_y, side, right.0);
         }
-        let value = right.0.starts_with('<').then_some((right_x, x1));
+        let value_end = if wrapped {
+            right_x + right_width + metrics.padding
+        } else {
+            x1
+        };
+        let value = right.0.starts_with('<').then_some((right_x, value_end));
         self.zone(
             [x0, top],
-            [x1, top + metrics.row],
+            [x1, top + height],
             ZoneAction::Row {
-                slot,
+                rank: (self.rank_base.get() + slot).saturating_sub(self.titles.get()),
                 selected,
                 value,
             },
         );
-        let mut clip_to = if right.0.is_empty() {
+        let mut clip_to = if right.0.is_empty() || wrapped {
             x1
         } else {
             right_x - metrics.padding
@@ -314,9 +527,15 @@ impl Painter<'_> {
         const SCALE: f32 = 0.8;
         let metrics = &self.metrics;
         let top = self.row_top(slot);
+        self.titles.set(self.titles.get() + 1);
         self.ui.set_window_font_scale(SCALE);
         let y = top + (metrics.row - metrics.font * SCALE) * 0.6;
-        self.text(metrics.padding * 1.5, y, GROUP_TITLE, title);
+        self.text(
+            metrics.padding * 1.5 + self.inset.get(),
+            y,
+            GROUP_TITLE,
+            title,
+        );
         self.ui.set_window_font_scale(1.0);
     }
 
@@ -608,8 +827,12 @@ impl HandheldUi {
     /// Draws the screen in front, the hold of the exit combination and the notification.
     pub fn draw(&mut self, ui: &Ui, frame: &UiFrame<'_>) {
         self.zones.get_mut().clear();
+        self.focus_rank.set(None);
+        self.list_span.set((0, 0));
         let size = ui.io().display_size;
-        self.metrics = self.metrics_for(size[1]);
+        // By the shorter side: the sizes of the landscape in portrait (owner request), which are
+        // the sizes the fonts were baked at.
+        self.metrics = self.metrics_for(size[0].min(size[1]));
         self.metrics.hint_lines = self.hint_lines.get();
         let _body = self.body_font().map(|font| ui.push_font(font));
         self.follow_the_state_picture(frame.host);
@@ -646,6 +869,13 @@ impl HandheldUi {
             heading: self.heading_font,
             zones: &self.zones,
             hint_lines: &self.hint_lines,
+            lift: Cell::new(0.0),
+            inset: Cell::new(0.0),
+            rank_base: Cell::new(0),
+            titles: Cell::new(0),
+            focus_rank: &self.focus_rank,
+            list_span: &self.list_span,
+            view_first: self.scroll.first,
             hold_ring: self
                 .widescreen_hold
                 .as_ref()
@@ -655,6 +885,7 @@ impl HandheldUi {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // One row per game, its badges in their order.
     fn draw_home(&self, ui: &Ui, frame: &UiFrame<'_>) {
         let Some(_window) = full_screen(ui, "##home", BACKGROUND) else {
             return;
@@ -681,7 +912,7 @@ impl HandheldUi {
             painter.message(&message, TEXT);
         }
         let rows = self.metrics.visible_rows(painter.size[1]);
-        let first = first_visible(self.roms.selected(), rows, total);
+        let first = painter.window(self.roms.selected(), rows, total);
         for (slot, (index, entry)) in self
             .roms
             .entries()
@@ -702,6 +933,10 @@ impl HandheldUi {
             } else {
                 tag.1
             };
+            // A game of a page of games, downloaded when it is played (web build).
+            if entry.remote.is_some() {
+                badges.push(("[web]", DIM));
+            }
             if entry.widescreen || entry.widescreen_other.is_some() {
                 // Grey while off, coloured once on, red for a version of the game the hack is
                 // not made for (owner request).
@@ -791,7 +1026,6 @@ impl HandheldUi {
             &strings::get(keys::HANDHELD_GAME_OPTIONS_TITLE),
             &[options.name()],
         );
-        let rows = self.metrics.visible_rows(painter.size[1]);
         let selected = options.selected_index();
         painter.title(&title, &page_path(&options.path()));
         // Q-103, read once for the screen, as the console's global pages do.
@@ -805,35 +1039,32 @@ impl HandheldUi {
             || GAME_MAIN.to_vec(),
             |page| page.iter().copied().map(GameRow::Option).collect(),
         );
-        let first = first_visible(selected, rows, main.len());
-        for (slot, (index, row)) in main.iter().enumerate().skip(first).take(rows).enumerate() {
+        let mut specs = Vec::with_capacity(main.len());
+        for (index, row) in main.iter().enumerate() {
             let focused = index == selected;
             let own_colour = |own: bool| match (own, focused) {
                 (true, true) => GAME_OWN_ON_FOCUS,
                 (true, false) => GAME_OWN,
                 (false, _) => DIM,
             };
-            match row {
-                GameRow::ResetAll => {
-                    let colour = own_colour(options.has_options());
-                    painter.row(
-                        slot,
-                        focused,
-                        &strings::get(keys::HANDHELD_GAME_OPTIONS_RESET),
-                        ("", colour),
-                    );
-                }
-                GameRow::Widescreen => painter.row(
-                    slot,
-                    focused,
-                    &strings::get(keys::HACK_WIDESCREEN),
-                    (&strings::get(keys::HANDHELD_HOLD_FOR_SETTINGS), DIM),
+            let plain = |left: String, right: String, colour: [f32; 4]| RowSpec::Row {
+                left,
+                badges: Vec::new(),
+                right,
+                colour,
+            };
+            specs.push(match row {
+                GameRow::ResetAll => plain(
+                    strings::get(keys::HANDHELD_GAME_OPTIONS_RESET),
+                    String::new(),
+                    own_colour(options.has_options()),
                 ),
-                GameRow::Hacks => {
-                    painter.row(slot, focused, &strings::get(keys::MENU_AIDS), (">", DIM));
+                GameRow::Widescreen | GameRow::Hacks => {
+                    let (label, value) = zaxnes_row_text(*row, options.edited());
+                    plain(label, value, DIM)
                 }
                 GameRow::Option(options::OptionRow::Group(key)) => {
-                    painter.group_row(slot, &strings::get(key));
+                    RowSpec::Group(strings::get(key))
                 }
                 // RO-3 §2 rule 2: a row that climbs to a page says how many values of its own the
                 // game has under it, and nothing when it has none.
@@ -844,12 +1075,11 @@ impl HandheldUi {
                     } else {
                         format!("{count} >")
                     };
-                    painter.row(
-                        slot,
-                        focused,
-                        &strings::get(page.title_key()),
-                        (&shown, own_colour(!count.is_empty())),
-                    );
+                    plain(
+                        strings::get(page.title_key()),
+                        shown,
+                        own_colour(!count.is_empty()),
+                    )
                 }
                 GameRow::Option(row) => {
                     let own = options.is_own(*row);
@@ -858,22 +1088,26 @@ impl HandheldUi {
                         Some(note) => format!("{shown} {note}"),
                         None => shown,
                     };
-                    // RO-3 §2 rule 1: the global value is dimmed, the game's own is marked.
-                    let badges: &[(&str, [f32; 4])] = if own {
-                        &[(GAME_OWN_MARKER, GAME_OWN)]
-                    } else {
-                        &[]
+                    let shown = match options::engine_lock_note(*row, options.edited()) {
+                        Some(note) => format!("{shown} {note}"),
+                        None => shown,
                     };
-                    painter.row_badged(
-                        slot,
-                        focused,
-                        &options::label(*row),
+                    // RO-3 §2 rule 1: the global value is dimmed, the game's own is marked.
+                    let badges = if own {
+                        vec![(GAME_OWN_MARKER, GAME_OWN)]
+                    } else {
+                        Vec::new()
+                    };
+                    RowSpec::Row {
+                        left: options::label(*row),
                         badges,
-                        (&shown, own_colour(own)),
-                    );
+                        right: shown,
+                        colour: own_colour(own),
+                    }
                 }
-            }
+            });
         }
+        painter.spec_list(&specs, selected, painter.list_room());
         painter.hints(layout::hints(Screen::GameOptions));
     }
 
@@ -924,23 +1158,26 @@ impl HandheldUi {
             visible
         };
         let selected = hacks.selected_index();
-        let first = first_visible(selected, visible, rows.len());
-        for (slot, (index, row)) in rows
+        let specs: Vec<RowSpec> = rows
             .iter()
             .enumerate()
-            .skip(first)
-            .take(visible)
-            .enumerate()
-        {
-            let focused = index == selected;
-            let colour = match (hacks.is_own(*row), focused) {
-                (true, true) => GAME_OWN_ON_FOCUS,
-                (true, false) => GAME_OWN,
-                (false, _) => DIM,
-            };
-            let shown = format!("< {} >", hacks.value_text(*row));
-            painter.row(slot, focused, &hacks.label(*row), (&shown, colour));
-        }
+            .map(|(index, row)| {
+                let colour = match (hacks.is_own(*row), index == selected) {
+                    (true, true) => GAME_OWN_ON_FOCUS,
+                    (true, false) => GAME_OWN,
+                    (false, _) => DIM,
+                };
+                RowSpec::Row {
+                    left: hacks.label(*row),
+                    badges: Vec::new(),
+                    right: format!("< {} >", hacks.value_text(*row)),
+                    colour,
+                }
+            })
+            .collect();
+        #[allow(clippy::cast_precision_loss)] // A few rows.
+        let room = (visible as f32 * self.metrics.row).min(painter.list_room());
+        painter.spec_list(&specs, selected, room);
         if let Some(other) = other {
             painter.note(visible, &other);
         } else if let Some(note) = hacks.patch_note() {
@@ -963,7 +1200,7 @@ impl HandheldUi {
         painter.title(&title, "");
         let rows = self.metrics.visible_rows(painter.size[1]);
         let total = profiles.choices().len();
-        let first = first_visible(profiles.selected(), rows, total);
+        let first = painter.window(profiles.selected(), rows, total);
         for (slot, (index, choice)) in profiles
             .choices()
             .iter()
@@ -992,18 +1229,17 @@ impl HandheldUi {
         let page = page_path(&self.options.path());
         painter.title(&text::options_title(), &page);
         // The list scrolls with the selection when it is longer than the screen.
-        let rows = self.metrics.visible_rows(painter.size[1]);
         let selected = self.options.selected_index();
         let list = self.options.rows();
-        let first = first_visible(selected, rows, list.len());
         // Q-103: whether the game being played holds Run-ahead at 0, read once for the page.
         let run_ahead_forced = frame
             .host
             .session()
             .is_some_and(crate::game_session::GameSession::forces_run_ahead_to_zero);
-        for (slot, (index, row)) in list.iter().enumerate().skip(first).take(rows).enumerate() {
+        let mut specs = Vec::with_capacity(list.len());
+        for row in list {
             if let options::OptionRow::Group(_) = row {
-                painter.group_row(slot, &options::label(*row));
+                specs.push(RowSpec::Group(options::label(*row)));
                 continue;
             }
             let value = options::value_text(*row, frame.host.settings(), self.overlay.camera());
@@ -1023,13 +1259,19 @@ impl HandheldUi {
                 Some(note) => format!("{shown} {note}"),
                 None => shown,
             };
-            painter.row(
-                slot,
-                index == selected,
-                &options::label(*row),
-                (&shown, DIM),
-            );
+            // A control only Zaxnes's own engine has, while another engine is chosen.
+            let shown = match options::engine_lock_note(*row, frame.host.settings()) {
+                Some(note) => format!("{shown} {note}"),
+                None => shown,
+            };
+            specs.push(RowSpec::Row {
+                left: options::row_label(*row, frame.host.settings()),
+                badges: Vec::new(),
+                right: shown,
+                colour: DIM,
+            });
         }
+        painter.spec_list(&specs, selected, painter.list_room());
         painter.hints(layout::hints(Screen::Options));
     }
 
@@ -1049,10 +1291,9 @@ impl HandheldUi {
         });
         painter.title(&title, "");
         let ids = self.overscan.rows();
-        let rows = self.metrics.visible_rows(painter.size[1]);
         let selected = self.overscan.selected_index();
-        let first = first_visible(selected, rows, ids.len());
-        for (slot, (index, id)) in ids.iter().enumerate().skip(first).take(rows).enumerate() {
+        let mut specs = Vec::with_capacity(ids.len());
+        for (index, id) in ids.iter().enumerate() {
             let focused = index == selected;
             let (shown, colour) = match game {
                 Some(options) => {
@@ -1072,9 +1313,14 @@ impl HandheldUi {
                 }
                 None => (overscan::value_text(*id, frame.host.settings()), DIM),
             };
-            let shown = format!("< {shown} >");
-            painter.row(slot, focused, &overscan::label(*id), (&shown, colour));
+            specs.push(RowSpec::Row {
+                left: overscan::label(*id),
+                badges: Vec::new(),
+                right: format!("< {shown} >"),
+                colour,
+            });
         }
+        painter.spec_list(&specs, selected, painter.list_room());
         painter.hints(layout::hints(Screen::Overscan));
     }
 
@@ -1099,7 +1345,7 @@ impl HandheldUi {
         }
         // The list scrolls with the selection when it is longer than the screen.
         let visible = self.metrics.visible_rows(painter.size[1]);
-        let first = first_visible(self.controls.selected, visible, rows.len());
+        let first = painter.window(self.controls.selected, visible, rows.len());
         for (slot, (index, row)) in rows
             .iter()
             .enumerate()
@@ -1140,17 +1386,36 @@ impl HandheldUi {
         let painter = self.painter(ui);
         let metrics = &self.metrics;
         // The menu is a panel in the middle, so the game stays visible around it.
-        // Xnes3D+: with the taller rows it can be longer than the screen, so it shows the rows
-        // that fit and scrolls with the selection.
-        let room = size[1] - metrics.hint_band() - metrics.title_band() - 2.0 * metrics.padding;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a few rows
-        let fit = ((room / metrics.row).floor().max(1.0)) as usize;
-        let rows = self.overlay.items().len().min(fit);
-        let panel_height = metrics.title_band()
-            + metrics.row * f32::from(u16::try_from(rows).unwrap_or(u16::MAX))
-            + metrics.padding;
         let panel_width = (size[0] - 4.0 * metrics.padding).min(metrics.font * 24.0);
         let left = (size[0] - panel_width) * 0.5;
+        let heights: Vec<f32> = self
+            .overlay
+            .items()
+            .iter()
+            .map(|item| {
+                let value = self.overlay_value(*item, frame);
+                painter.row_height(Self::overlay_wraps(
+                    &painter,
+                    *item,
+                    &value,
+                    left,
+                    panel_width,
+                ))
+            })
+            .collect();
+        // Taller than the screen (owner request): the rows scroll with the selection, as the
+        // lists do, an arrow saying more rows are above or below.
+        let room = (size[1] - metrics.hint_band() - metrics.title_band() - metrics.padding * 2.0)
+            .max(metrics.row);
+        let (first, last) = overlay_window(
+            &heights,
+            self.overlay.selected_index(),
+            self.overlay_first.get(),
+            room,
+        );
+        self.overlay_first.set(first);
+        let rows: f32 = heights[first..last].iter().sum();
+        let panel_height = metrics.title_band() + rows + metrics.padding;
         let top = ((size[1] - metrics.hint_band() - panel_height) * 0.5).max(0.0);
         painter
             .list
@@ -1158,7 +1423,35 @@ impl HandheldUi {
             .filled(true)
             .rounding(metrics.padding)
             .build();
-        self.draw_overlay_rows(&painter, frame, left, top, panel_width, rows);
+        self.draw_overlay_rows(&painter, frame, (left, top, panel_width), (first, last));
+        // Triangles drawn, not glyphs: the interface's face may lack them.
+        let half = (metrics.font * 0.3).round();
+        let x = left + panel_width - metrics.padding * 1.5 - half;
+        let y = top + metrics.title_band() * 0.5;
+        if first > 0 {
+            painter
+                .list
+                .add_triangle(
+                    [x - half, y - half * 0.3],
+                    [x + half, y - half * 0.3],
+                    [x, y - half * 1.5],
+                    DIM,
+                )
+                .filled(true)
+                .build();
+        }
+        if last < heights.len() {
+            painter
+                .list
+                .add_triangle(
+                    [x - half, y + half * 0.3],
+                    [x + half, y + half * 0.3],
+                    [x, y + half * 1.5],
+                    DIM,
+                )
+                .filled(true)
+                .build();
+        }
         painter.hints(layout::hints(Screen::Overlay));
     }
 
@@ -1166,10 +1459,8 @@ impl HandheldUi {
         &self,
         painter: &Painter<'_>,
         frame: &UiFrame<'_>,
-        left: f32,
-        top: f32,
-        width: f32,
-        visible: usize,
+        (left, top, width): (f32, f32, f32),
+        (first, last): (usize, usize),
     ) {
         let metrics = &self.metrics;
         {
@@ -1181,52 +1472,56 @@ impl HandheldUi {
                 &strings::get(keys::HANDHELD_MENU_TITLE),
             );
         }
-        let items = self.overlay.items();
-        let first = first_visible(self.overlay.selected_index(), visible, items.len());
-        // Xnes3D+: "more" marks at the right of the title when rows are above or below.
-        let more = match (first > 0, first + visible < items.len()) {
-            (true, true) => "^ v",
-            (true, false) => "^",
-            (false, true) => "v",
-            (false, false) => "",
-        };
-        if !more.is_empty() {
-            painter.text(
-                left + width - metrics.padding * 1.5 - painter.width(more),
-                top + metrics.padding,
-                DIM,
-                more,
-            );
-        }
-        for (shown, (index, item)) in items.iter().enumerate().skip(first).take(visible).enumerate() {
-            let slot = f32::from(u16::try_from(shown).unwrap_or(0));
-            let row_top = top + metrics.title_band() + slot * metrics.row;
+        let mut row_top = top + metrics.title_band();
+        for (index, item) in self
+            .overlay
+            .items()
+            .iter()
+            .enumerate()
+            .take(last)
+            .skip(first)
+        {
             let selected = index == self.overlay.selected_index();
+            let value = self.overlay_value(*item, frame);
+            // Owner request: a value that does not fit beside its label goes under it.
+            let wrapped = Self::overlay_wraps(painter, *item, &value, left, width);
+            let height = painter.row_height(wrapped);
             if selected {
                 painter
                     .list
                     .add_rect(
                         [left + metrics.padding * 0.5, row_top],
-                        [left + width - metrics.padding * 0.5, row_top + metrics.row],
+                        [left + width - metrics.padding * 0.5, row_top + height],
                         FOCUS,
                     )
                     .filled(true)
                     .rounding(metrics.padding * 0.4)
                     .build();
             }
-            let value = self.overlay_value(*item, frame);
-            let value_x = left + width - metrics.padding * 1.5 - painter.width(&value);
+            let y = row_top + (metrics.row - metrics.font) * 0.5;
+            let (value_x, value_y) = if wrapped {
+                (left + metrics.padding * 2.5, y + painter.wrap_step())
+            } else {
+                (
+                    left + width - metrics.padding * 1.5 - painter.width(&value),
+                    y,
+                )
+            };
+            let value_end = if wrapped {
+                value_x + painter.width(&value) + metrics.padding
+            } else {
+                left + width
+            };
             painter.zone(
                 [left + metrics.padding * 0.5, row_top],
-                [left + width - metrics.padding * 0.5, row_top + metrics.row],
+                [left + width - metrics.padding * 0.5, row_top + height],
                 ZoneAction::Row {
-                    slot: index,
+                    rank: index,
                     selected,
-                    value: (!value.is_empty()).then_some((value_x, left + width)),
+                    value: (!value.is_empty()).then_some((value_x, value_end)),
                 },
             );
             let colour = if selected { ON_FOCUS } else { TEXT };
-            let y = row_top + (metrics.row - metrics.font) * 0.5;
             painter.text(
                 left + metrics.padding * 1.5,
                 y,
@@ -1234,9 +1529,33 @@ impl HandheldUi {
                 &Self::overlay_label(*item),
             );
             if !value.is_empty() {
-                painter.text(value_x, y, if selected { ON_FOCUS } else { DIM }, &value);
+                painter.text(
+                    value_x,
+                    value_y,
+                    if selected { ON_FOCUS } else { DIM },
+                    &value,
+                );
             }
+            row_top += height;
         }
+    }
+
+    /// Whether the in-game menu's row `item` with `value` overflows the panel `width` wide at
+    /// `left`: its value then goes under its label.
+    fn overlay_wraps(
+        painter: &Painter<'_>,
+        item: OverlayItem,
+        value: &str,
+        left: f32,
+        width: f32,
+    ) -> bool {
+        let padding = painter.metrics.padding;
+        painter.wraps(
+            &Self::overlay_label(item),
+            &[],
+            value,
+            (left + padding, left + width - padding * 0.5),
+        )
     }
 
     fn overlay_label(item: OverlayItem) -> String {
@@ -1244,13 +1563,16 @@ impl HandheldUi {
             OverlayItem::Resume => keys::HANDHELD_MENU_RESUME,
             OverlayItem::SaveState => keys::HANDHELD_MENU_SAVE_STATE,
             OverlayItem::LoadState => keys::HANDHELD_MENU_LOAD_STATE,
-            OverlayItem::FastForward => keys::HANDHELD_MENU_FAST_FORWARD,
+            OverlayItem::Speed => keys::HANDHELD_MENU_GAME_SPEED,
             OverlayItem::Camera => keys::HANDHELD_OPTION_CAMERA,
             OverlayItem::Options => keys::WINDOW_OPTIONS,
             OverlayItem::Widescreen => keys::HACK_WIDESCREEN,
             OverlayItem::Hacks => keys::MENU_AIDS,
             OverlayItem::Achievements => keys::TAB_ACHIEVEMENTS,
             OverlayItem::QuitToList => keys::HANDHELD_MENU_QUIT_TO_LIST,
+            OverlayItem::WebOpenRom => keys::HANDHELD_MENU_WEB_OPEN_ROM,
+            OverlayItem::WebImportProfile => keys::HANDHELD_MENU_WEB_IMPORT_PROFILE,
+            OverlayItem::WebManageCache => keys::HANDHELD_MENU_WEB_MANAGE_CACHE,
             OverlayItem::ExitToLauncher => keys::HANDHELD_MENU_EXIT,
         })
     }
@@ -1260,9 +1582,18 @@ impl HandheldUi {
             OverlayItem::SaveState | OverlayItem::LoadState => {
                 let slot = self.overlay.slot();
                 let record = frame.host.slots.find(&numbered_slot_id(slot));
-                format!("< {} >", menu_bar::slot_label(slot, record))
+                format!("<{}>", menu_bar::slot_short_label(slot, record))
             }
             OverlayItem::Camera => format!("< {} >", options::camera_label(self.overlay.camera())),
+            OverlayItem::Speed => format!(
+                "< {} >",
+                crate::emulation::speed_setting::factor_text(
+                    f64::from(self.overlay.speed()) / 10.0
+                )
+            ),
+            OverlayItem::Widescreen | OverlayItem::Hacks if !playing_with_hacks(frame.host) => {
+                strings::get(keys::HANDHELD_ZAXNES_ONLY)
+            }
             OverlayItem::Widescreen => {
                 let settings = frame.host.settings();
                 let on = settings.get(SettingId::VideoWidescreen).as_int() != 0;
@@ -1315,7 +1646,7 @@ impl HandheldUi {
         let split = (size[0] * 0.56).round();
         let total = crate::persistence::save_slots::CONSOLE_SLOT_COUNT;
         let rows = metrics.visible_rows(size[1]);
-        let first = first_visible(states.selected_index(), rows, total);
+        let first = painter.window(states.selected_index(), rows, total);
         for (row, index) in (first..total).take(rows).enumerate() {
             let slot = i32::try_from(index + 1).unwrap_or(1);
             let record = frame.host.slots.find(&numbered_slot_id(slot));
@@ -1327,11 +1658,23 @@ impl HandheldUi {
             };
             let label = menu_bar::slot_label(slot, record);
             let (name, date) = label.split_once(" — ").unwrap_or((label.as_str(), ""));
+            // The engine that made the state, when it is not Zaxnes or the game runs on another;
+            // red when it is not the engine in play, whose state it cannot load.
+            let (date, colour) =
+                match menu_bar::slot_engine_note(frame.host, &numbered_slot_id(slot)) {
+                    Some(menu_bar::EngineNote::Shown(note)) => (format!("{date} · {note}"), colour),
+                    Some(menu_bar::EngineNote::Refused(_)) => {
+                        let engine = frame.host.slot_engine(&numbered_slot_id(slot));
+                        let name = engine.map_or("?", zax_core_api::EngineKind::display_name);
+                        (format!("{date} · {name}"), WARNING)
+                    }
+                    None => (date.to_owned(), colour),
+                };
             painter.row_to(
                 row,
                 (index == states.selected_index(), accent),
                 name,
-                (date, colour),
+                (&date, colour),
                 split - metrics.padding * 0.5,
             );
         }
@@ -1402,11 +1745,18 @@ impl HandheldUi {
             SlotState::OtherVersion => Some((keys::SLOT_OTHER_HACK_VERSION, WARNING)),
             SlotState::Empty | SlotState::Fits => None,
         };
-        if let Some((key, colour)) = caption {
+        let caption = caption.map(|(key, colour)| (strings::get(key), colour));
+        // A state of another engine than the game's says so first: that is what stops it.
+        let caption = match menu_bar::slot_engine_note(frame.host, &numbered_slot_id(slot)) {
+            Some(menu_bar::EngineNote::Refused(note)) => Some((note, WARNING)),
+            Some(menu_bar::EngineNote::Shown(note)) if caption.is_none() => Some((note, DIM)),
+            _ => caption,
+        };
+        if let Some((message, colour)) = caption {
             ui.set_cursor_pos([left, top + height + metrics.padding]);
             let _wrap = ui.push_text_wrap_pos_with_pos(right);
             let _colour = ui.push_style_color(StyleColor::Text, colour);
-            ui.text_wrapped(strings::get(key));
+            ui.text_wrapped(message);
         }
     }
 
@@ -1530,7 +1880,7 @@ impl HandheldUi {
         let rows = self.metrics.visible_rows(painter.size[1]).saturating_sub(1);
         let selected = self.achievements.selected_index();
         let all = super::achievements::ROWS;
-        let first = first_visible(selected, rows, all.len());
+        let first = painter.window(selected, rows, all.len());
         for (slot, (index, row)) in all.iter().enumerate().skip(first).take(rows).enumerate() {
             let switch = |id| {
                 let on = settings.get(id).as_bool();
@@ -1794,5 +2144,86 @@ impl HandheldUi {
                 self.list_scroll_max.set(ui.scroll_max_y());
             });
         painter.hints(layout::hints(Screen::AchievementList));
+    }
+}
+
+/// Whether the engine of the game in play carries the widescreen extension and the hack packs
+/// (or no game is in play): Zaxnes, and NesHawk since lot NESHAWK-HACKS; FCEUX has not got them.
+pub(super) fn playing_with_hacks(host: &crate::application::AppHost) -> bool {
+    host.session().is_none_or(|session| {
+        zax_core_api::Capabilities::of_kind(session.core().kind())
+            .has(zax_core_api::Capability::Widescreen)
+    })
+}
+
+/// The label and value of the widescreen and hacks rows of a game's main options screen: what
+/// they open, or that they are Zaxnes's own while the game runs on another engine.
+fn zaxnes_row_text(row: GameRow, model: &zax_settings::model::SettingsModel) -> (String, String) {
+    let label = strings::get(if row == GameRow::Widescreen {
+        keys::HACK_WIDESCREEN
+    } else {
+        keys::MENU_AIDS
+    });
+    let capability = if row == GameRow::Widescreen {
+        zax_core_api::Capability::Widescreen
+    } else {
+        zax_core_api::Capability::HackPacks
+    };
+    let value = if !crate::ui::options::engine_has(model, capability) {
+        strings::get(keys::HANDHELD_ZAXNES_ONLY)
+    } else if row == GameRow::Widescreen {
+        strings::get(keys::HANDHELD_HOLD_FOR_SETTINGS)
+    } else {
+        ">".to_owned()
+    };
+    (label, value)
+}
+
+/// The rows `first..last` of a menu whose rows are `heights` tall that fit in `room`: from
+/// `previous` (the first row shown before), moved only as far as the `selected` row needs; all
+/// of them when they fit.
+fn overlay_window(heights: &[f32], selected: usize, previous: usize, room: f32) -> (usize, usize) {
+    let total = heights.len();
+    if total == 0 || heights.iter().sum::<f32>() <= room {
+        return (0, total);
+    }
+    let selected = selected.min(total - 1);
+    // The end of the rows from `first` that fit (one at least).
+    let fit = |first: usize| {
+        let mut used = 0.0;
+        let mut last = first;
+        while last < total && (last == first || used + heights[last] <= room) {
+            used += heights[last];
+            last += 1;
+        }
+        last
+    };
+    let mut first = previous.min(selected);
+    while fit(first) <= selected {
+        first += 1;
+    }
+    // No empty room at the bottom while rows wait above.
+    while first > 0 && fit(first - 1) >= total {
+        first -= 1;
+    }
+    (first, fit(first))
+}
+
+#[cfg(test)]
+mod overlay_window_tests {
+    use super::overlay_window;
+
+    #[test]
+    fn the_menu_scrolls_only_when_it_does_not_fit() {
+        let rows = [1.0; 10];
+        assert_eq!((0, 10), overlay_window(&rows, 9, 0, 10.0));
+        assert_eq!((0, 4), overlay_window(&rows, 0, 0, 4.0));
+        assert_eq!((0, 4), overlay_window(&rows, 3, 0, 4.0));
+        assert_eq!((1, 5), overlay_window(&rows, 4, 0, 4.0));
+        // Going back up keeps the window until the selection leaves it.
+        assert_eq!((1, 5), overlay_window(&rows, 2, 1, 4.0));
+        assert_eq!((0, 4), overlay_window(&rows, 0, 1, 4.0));
+        // Wrapping round to the last row shows the end.
+        assert_eq!((6, 10), overlay_window(&rows, 9, 0, 4.0));
     }
 }

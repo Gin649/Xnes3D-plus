@@ -24,7 +24,7 @@ use crate::geometry;
 use crate::interop;
 use crate::numerics::{Matrix4x4, Vector2, Vector3, Vector4};
 use crate::occlusion::{self, Occlusion};
-use crate::scene::{SceneFrame, SceneState};
+use crate::scene::{SceneFrame, SceneState, ThreeDShift};
 use crate::shadow_volume::ShadowVolume;
 
 /// How a backend lays one placement out in its instance data. A type of its own per layout, so
@@ -86,6 +86,7 @@ pub trait Residency {
     fn picture(
         &mut self,
         picture: &[u8],
+        colours: crate::scene::PictureColours<'_>,
         height: usize,
     ) -> Result<Option<Self::Texture>, Self::Error>;
 
@@ -334,6 +335,7 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
                 residency,
                 fixed,
                 frame.nes_picture,
+                frame.picture_colours(),
                 frame.nes_picture_height,
                 scene.picture_shift.map(|(shift, _, _)| shift),
                 &scene.picture_overlay,
@@ -346,8 +348,12 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
             let hud_matrix = interop::hud_matrix(view);
             let occlusion = Occlusion::for_scene(scene, view);
             let clip_rect = scene.visible_rectangle();
+            let shift = scene
+                .three_d_shift
+                .as_ref()
+                .filter(|_| !scene.two_dimensional_mode);
             for tile in list.tiles() {
-                self.collect_tile(residency, tile, &hud_matrix, &occlusion, &clip_rect)?;
+                self.collect_tile(residency, tile, &hud_matrix, &occlusion, &clip_rect, shift)?;
             }
         }
 
@@ -376,11 +382,14 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
     /// The textured quad of the 2D mode (AMD-009): the core's 256 × 240 picture mapped on the
     /// NES plane of REQ-E3D-410, shaded like any other front-facing tile. False when the
     /// picture has the wrong size.
+    // The picture's three parts (indices, emphasis, rows) travel side by side, as in the frame.
+    #[allow(clippy::too_many_arguments)]
     fn collect_picture_quad<R: Residency<Mesh = M, Texture = T>>(
         &mut self,
         residency: &mut R,
         fixed: FixedMeshes<'_>,
         picture: &[u8],
+        colours: crate::scene::PictureColours<'_>,
         height: usize,
         shift: Option<f32>,
         overlay: &[u8],
@@ -389,7 +398,7 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
             return Ok(false);
         };
         if let (Some(shift), Some((playfield, rest))) = (shift, fixed.picture_bands) {
-            let Some(texture) = residency.picture(picture, height)? else {
+            let Some(texture) = residency.picture(picture, colours, height)? else {
                 return Ok(false);
             };
             #[allow(clippy::cast_precision_loss)] // 256 to 1280, 240 to 720.
@@ -439,7 +448,7 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
                 None => return Ok(false),
             }
         };
-        let Some(texture) = residency.picture(picture, height)? else {
+        let Some(texture) = residency.picture(picture, colours, height)? else {
             return Ok(false);
         };
         let Some(mesh) = residency.mesh(quad)? else {
@@ -466,6 +475,7 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
         hud_matrix: &Mat4,
         occlusion: &Occlusion,
         clip_rect: &geometry::VisibleRect,
+        shift: Option<&ThreeDShift>,
     ) -> Result<(), R::Error> {
         let Some(mesh) = tile.mesh.as_ref().filter(|mesh| !mesh.is_empty()) else {
             return Ok(());
@@ -497,6 +507,11 @@ impl<M: Copy + Eq + Hash + Debug, T: Copy + Eq + Hash + Debug> FramePlan<M, T> {
         if hud {
             // REQ-SCN-045: the HUD lives in a plane attached to the camera.
             model = *hud_matrix * model;
+        } else if let Some(amount) =
+            shift.and_then(|shift| shift.of_tile(tile.tile.y(), tile.tile.ord()))
+        {
+            // The experimental smooth scrolling: the playfield between two frames.
+            model = Mat4::translation(Vec3::new(-amount, 0.0, 0.0)) * model;
         }
 
         // REQ-SCN-022: in FPV, an opaque tile of another shape that crosses the eye-to-target

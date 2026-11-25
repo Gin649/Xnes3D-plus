@@ -198,7 +198,11 @@ impl BankWindows {
     #[cfg(any(
         feature = "board-mmc3-scramble",
         feature = "board-215",
-        feature = "board-219"
+        feature = "board-219",
+        feature = "board-323",
+        feature = "board-266",
+        feature = "board-mmc1-outer",
+        feature = "board-vrc-p"
     ))]
     pub fn remap_prg_banks(&mut self, mask: i32, bits: i32) {
         for slot in 0..Self::PRG_WINDOWS {
@@ -249,7 +253,13 @@ impl BankWindows {
     /// `remap_prg_banks` states.
     ///
     /// Additive: behind the three features of MF-UNL-11, its only callers.
-    #[cfg(any(feature = "board-215", feature = "board-219"))]
+    #[cfg(any(
+        feature = "board-215",
+        feature = "board-219",
+        feature = "board-323",
+        feature = "board-mmc1-outer",
+        feature = "board-vrc-p"
+    ))]
     pub fn remap_chr_banks(&mut self, mask: i32, bits: i32) {
         for slot in 0..Self::CHR_WINDOWS {
             let bank = i32::try_from(self.chr_offset[slot] / Self::CHR_WINDOW_SIZE).unwrap_or(0);
@@ -424,6 +434,50 @@ impl<'m> ChrView<'m> {
             data: self.data,
             offsets,
         }
+    }
+
+    /// The two 8-byte planes of the tile row block at `address` (a multiple of 16), each byte of
+    /// a plane in the byte of the `u64` of its row, as eight [`Self::read`] calls of each plane
+    /// would give them (lot FAST-1: one slice read per plane).
+    #[must_use]
+    pub fn tile_planes(&self, address: u16) -> (u64, u64) {
+        if self.data.is_empty() {
+            return (0, 0);
+        }
+        let index = usize::from(address) & 0x1FFF;
+        let within = index & (BankWindows::CHR_WINDOW_SIZE - 1);
+        let offset = self.offsets[index / BankWindows::CHR_WINDOW_SIZE] + within;
+        if within + 16 <= BankWindows::CHR_WINDOW_SIZE {
+            if let Some(bytes) = self.data.get(offset..offset + 16) {
+                let mut low = [0u8; 8];
+                let mut high = [0u8; 8];
+                low.copy_from_slice(&bytes[..8]);
+                high.copy_from_slice(&bytes[8..]);
+                return (u64::from_le_bytes(low), u64::from_le_bytes(high));
+            }
+        }
+        let mut plane0 = 0u64;
+        let mut plane1 = 0u64;
+        for row in 0..8u16 {
+            plane0 |= u64::from(self.read(address.wrapping_add(row))) << (8 * row);
+            plane1 |= u64::from(self.read(address.wrapping_add(8 + row))) << (8 * row);
+        }
+        (plane0, plane1)
+    }
+
+    /// The bytes at `address` and `address + 8`, the two planes of one tile row, as two
+    /// [`Self::read`] calls give them (lot FAST-1: one window lookup for both).
+    #[must_use]
+    pub fn read_pair(&self, address: u16) -> (u8, u8) {
+        let index = usize::from(address) & 0x1FFF;
+        let within = index & (BankWindows::CHR_WINDOW_SIZE - 1);
+        if within + 8 < BankWindows::CHR_WINDOW_SIZE && !self.data.is_empty() {
+            let offset = self.offsets[index / BankWindows::CHR_WINDOW_SIZE] + within;
+            if let (Some(&low), Some(&high)) = (self.data.get(offset), self.data.get(offset + 8)) {
+                return (low, high);
+            }
+        }
+        (self.read(address), self.read(address.wrapping_add(8)))
     }
 
     /// The byte at `address` ($0000-$1FFF), 0 when there is no CHR at all.

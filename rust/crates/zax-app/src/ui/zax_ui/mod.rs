@@ -13,6 +13,7 @@ mod key_config;
 mod menu;
 mod movie_bar;
 mod options;
+mod options_new;
 mod overlay;
 mod pens;
 mod shaders;
@@ -27,6 +28,7 @@ use super::confirm_dialog::ConfirmationView;
 use super::file_browser::{self, FileBrowserModel};
 use super::file_picker::{FilePicker, PickPoll, PickRequest};
 use super::key_config::KeyConfigModel;
+use super::keys;
 use super::menu_bar::MenuBarModel;
 use super::menu_shortcuts::{self, ShortcutCommand, ShortcutModifiers};
 use super::notifications;
@@ -86,12 +88,14 @@ pub enum BrowserPurpose {
     Rom,
     /// A profile to import.
     Profile,
-    /// A cover picture to import.
-    Cover,
     /// The ROM folder of the console mode (Rust-only).
     RomsFolder,
-    /// A 3dSen installation or bundle to import.
+    /// A 3dSen installation folder to import.
     ThreeDSen,
+    /// 3dSen's profiles file (`.bundle`) to import, whatever its name (owner request).
+    ThreeDSenBundle,
+    /// An archive holding 3dSen or its profiles file.
+    ThreeDSenArchive,
     /// A movie to play (EDITOR-1): `.fm2` or Zaxnes's own.
     Movie,
 }
@@ -112,6 +116,13 @@ pub struct ZaxUi {
     pub menu_bar: MenuBarModel,
     /// The options window.
     pub options: OptionsModel,
+    /// Lot REWRITE-UI: the classic options window rather than the new one (a button in each
+    /// goes to the other while the two are compared).
+    pub options_classic: bool,
+    /// Lot REWRITE-UI: the new window's advanced mode (every tab) rather than its simple one.
+    pub options_advanced: bool,
+    /// Lot REWRITE-UI: the preset last chosen on the slider (0 fastest to 4 most faithful).
+    pub options_preset: usize,
     /// The key configuration window.
     pub keys: KeyConfigModel,
     /// The profile chooser.
@@ -183,6 +194,9 @@ impl ZaxUi {
             state: UiState::default(),
             menu_bar: MenuBarModel::new(),
             options: OptionsModel::new(),
+            options_classic: false,
+            options_advanced: false,
+            options_preset: 2,
             keys: KeyConfigModel::new(),
             chooser: ProfileChooserModel::new(host.games().library()),
             browser: FileBrowserModel::new(),
@@ -301,15 +315,18 @@ impl ZaxUi {
         };
         self.menu_bar_drawn = shown;
         self.chrome_height = if auto_hide { 0.0 } else { bar };
-        if self.state.welcome_visible() {
-            self.draw_welcome(ui, frame.host);
-        }
+        // Lot REWRITE-UI (owner, 2026-11-17): no welcome window any more; a game opens from the
+        // File menu. `UiState::welcome_visible` still says when it would show.
         if self.state.has_current_game {
             pens::draw_pens(ui, frame.host);
             self.draw_movie_bar(ui, frame.host);
         }
         if self.state.options {
-            self.draw_options(ui, frame.host);
+            if self.options_classic {
+                self.draw_options(ui, frame.host);
+            } else {
+                self.draw_options_new(ui, frame.host);
+            }
         }
         if self.state.shaders {
             self.draw_shaders(ui, frame.host);
@@ -398,6 +415,10 @@ impl ZaxUi {
     /// A command asked the interface for a window or a dialogue.
     pub fn handle_ui_request(&mut self, host: &mut AppHost, command: Command, args: &CommandArgs) {
         match command {
+            // Web build: the page's own dialogue (prepackaged ROMs, drop, the player's files).
+            Command::OpenRom if crate::web_bridge::active() => {
+                crate::web_bridge::request_open_dialog();
+            }
             Command::OpenRom => self.open_browser(host, BrowserPurpose::Rom),
             Command::OpenRecentRom => Self::open_recent(host, args.number),
             Command::ChooseProfile => {
@@ -413,7 +434,25 @@ impl ZaxUi {
                     None => self.open_browser(host, BrowserPurpose::ThreeDSen),
                 }
             }
-            Command::ImportCover => self.open_browser(host, BrowserPurpose::Cover),
+            Command::ImportThreeDSenBundle => {
+                self.open_browser(host, BrowserPurpose::ThreeDSenBundle);
+            }
+            Command::ImportThreeDSenArchive => {
+                self.open_browser(host, BrowserPurpose::ThreeDSenArchive);
+            }
+            // Owner request: Steam's 3dSen, found by itself, imported at once.
+            Command::ImportThreeDSenSteam => {
+                match crate::steam_three_d_sen::installations().into_iter().next() {
+                    Some(installation) => {
+                        self.import_three_d_sen(host, &installation.to_string_lossy());
+                    }
+                    None => {
+                        let message = strings::get(keys::IMPORT_THREE_DSEN_STEAM_MISSING);
+                        host.notifications.show_error(&message);
+                        self.log(message);
+                    }
+                }
+            }
             Command::OpenMovie => self.open_browser(host, BrowserPurpose::Movie),
             Command::CancelModal => self.cancel_topmost_modal(),
             Command::ShowOptions => self.state.options = true,
@@ -559,8 +598,9 @@ impl ZaxUi {
     fn browser_title(purpose: BrowserPurpose) -> String {
         match purpose {
             BrowserPurpose::Rom => text::open_rom_title(),
-            BrowserPurpose::Cover => text::import_cover_title(),
             BrowserPurpose::ThreeDSen => text::import_three_d_sen_title(),
+            BrowserPurpose::ThreeDSenBundle => strings::get(keys::IMPORT_THREE_DSEN_BUNDLE_TITLE),
+            BrowserPurpose::ThreeDSenArchive => strings::get(keys::IMPORT_THREE_DSEN_ARCHIVE_TITLE),
             BrowserPurpose::Profile => text::import_profile_title(),
             BrowserPurpose::RomsFolder => text::roms_folder_title(),
             BrowserPurpose::Movie => text::open_movie_title(),
@@ -570,8 +610,10 @@ impl ZaxUi {
     fn browser_filters(purpose: BrowserPurpose) -> Vec<file_browser::FileFilter> {
         match purpose {
             BrowserPurpose::Rom => file_browser::rom_filters(),
-            BrowserPurpose::Cover => file_browser::cover_filters(),
-            BrowserPurpose::ThreeDSen => file_browser::three_d_sen_filters(),
+            BrowserPurpose::ThreeDSen | BrowserPurpose::ThreeDSenBundle => {
+                file_browser::three_d_sen_filters()
+            }
+            BrowserPurpose::ThreeDSenArchive => file_browser::three_d_sen_archive_filters(),
             BrowserPurpose::Profile => file_browser::profile_filters(),
             BrowserPurpose::RomsFolder => Vec::new(),
             BrowserPurpose::Movie => file_browser::movie_filters(),
@@ -662,9 +704,10 @@ impl ZaxUi {
         }
         match self.purpose {
             BrowserPurpose::Rom => host.enqueue(Command::OpenRom, CommandArgs::of_text(path)),
-            BrowserPurpose::Cover => host.enqueue(Command::ImportCover, CommandArgs::of_text(path)),
             BrowserPurpose::Movie => host.enqueue(Command::OpenMovie, CommandArgs::of_text(path)),
-            BrowserPurpose::ThreeDSen => self.import_three_d_sen(host, path),
+            BrowserPurpose::ThreeDSen
+            | BrowserPurpose::ThreeDSenBundle
+            | BrowserPurpose::ThreeDSenArchive => self.import_three_d_sen(host, path),
             BrowserPurpose::Profile => self.import_profile(host, path),
             BrowserPurpose::RomsFolder => {
                 host.update_settings(|model| model.set(SettingId::UiRomsFolder, path));
@@ -777,6 +820,11 @@ impl ZaxUi {
     /// drives to reach the dialogues of REQ-UI-214 without a window.
     pub fn choose_profile_to_import(&mut self, host: &mut AppHost, path: &str) {
         self.import_profile(host, path);
+    }
+
+    /// Profiles joined the library (the import folder): the chooser shows them.
+    pub fn profiles_imported(&mut self, host: &AppHost) {
+        self.rebuild_chooser(host);
     }
 
     fn rebuild_chooser(&mut self, host: &AppHost) {

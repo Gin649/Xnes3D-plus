@@ -3,12 +3,14 @@
 
 pub mod built_in;
 mod filesystem;
+mod physical;
 mod folders;
 mod game_identity;
 mod profile_catalogue;
 mod user_folder;
 
 pub use filesystem::{ProfileFileSystem, UserDataLayout};
+pub use physical::PhysicalProfileFileSystem;
 pub use folders::ProfileFolders;
 pub use game_identity::{normalised_name, GameIdentity, ProfileGeneration};
 pub use profile_catalogue::{
@@ -16,6 +18,6 @@ pub use profile_catalogue::{
     DEFAULT_THREE_DIMENSIONAL_TITLE, DEMO_EDITION, FULL_EDITION, TWO_DIMENSIONAL_MODE_TITLE,
 };
 pub use user_folder::{
-    derived_id, import_messages, shown_title, ProfileImportOutcome, ProfileImportPlan,
+    derived_id, import_messages, profile_title, shown_title, ProfileImportOutcome, ProfileImportPlan,
     ProfileImportResult, ProfileOrigin, UserProfile, UserProfileFolder,
 };

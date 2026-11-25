@@ -5,10 +5,14 @@ use super::Screen;
 use crate::ui::fonts::FontSizes;
 use crate::ui::keys;
 
-/// Body text height, in pixels, on a 480-pixel-high display.
-const BODY_AT_480: f32 = 22.0;
-/// Smallest row, in pixels: a thumb-sized target on a 3.5 inch screen.
-pub const MINIMUM_ROW: f32 = 36.0;
+/// Body text height, in pixels, on a 480-pixel-high display: 18 rather than the 22 it was
+/// (owner request, 2026-11-20), everywhere the console interface runs.
+const BODY_AT_480: f32 = 18.0;
+/// Smallest row, in pixels: a thumb-sized target on a 3.5 inch screen (36 before the owner
+/// asked for slightly lower rows, 2026-11-20).
+pub const MINIMUM_ROW: f32 = 32.0;
+/// A row's height in body text heights (1.75 before, the same request).
+const ROW_PER_FONT: f32 = 1.65;
 
 /// The sizes of one display.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,6 +90,38 @@ impl Metrics {
     }
 }
 
+/// The window of a list to draw: its first row and how many rows, each `heights[i]` pixels high
+/// (a row whose value goes under its label is taller, owner request), so that `selected` shows
+/// whole in `room` pixels. It starts from `start` (the window rows of one height would have) and
+/// moves down while the selection does not fit, then up while room is left at the list's end.
+#[must_use]
+pub fn list_window(heights: &[f32], selected: usize, room: f32, start: usize) -> (usize, usize) {
+    let total = heights.len();
+    if total == 0 {
+        return (0, 0);
+    }
+    let selected = selected.min(total - 1);
+    let mut first = start.min(selected);
+    while first < selected && heights[first..=selected].iter().sum::<f32>() > room {
+        first += 1;
+    }
+    let mut used = 0.0;
+    let mut count = 0;
+    for height in &heights[first..] {
+        if count > 0 && used + height > room {
+            break;
+        }
+        used += height;
+        count += 1;
+    }
+    while first > 0 && first + count == total && used + heights[first - 1] <= room {
+        first -= 1;
+        used += heights[first];
+        count += 1;
+    }
+    (first, count.max(1))
+}
+
 /// A control hint: the button, and the key of its meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hint {
@@ -104,8 +140,6 @@ const HOME_HINTS: &[Hint] = &[
     hint("X", keys::HANDHELD_HINT_OPTIONS),
     hint("Y", keys::HANDHELD_HINT_PROFILE),
     hint("Select", keys::HANDHELD_HINT_GAME_OPTIONS),
-    // AMD-053 REQ-UI-210: the one free button of the home screen marks a favourite.
-    hint("L2", keys::HANDHELD_HINT_FAVORITE),
 ];
 // Xnes3D+: every screen shows A (choose) and B (back), so A always confirms and B always backs.
 const HACKS_HINTS: &[Hint] = &[
@@ -202,6 +236,21 @@ pub const CAPTURE_HINTS: &[Hint] = &[hint("Menu", keys::HANDHELD_HINT_CANCEL)];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_window_keeps_the_selection_whole_with_rows_of_two_lines() {
+        // Six rows of 40 in 160 pixels: four fit, a two-line row (60) takes more room.
+        let heights = [40.0, 60.0, 40.0, 60.0, 40.0, 40.0];
+        assert_eq!((0, 3), list_window(&heights, 0, 160.0, 0));
+        // The fifth selected from the start: the window moves down until it shows.
+        let (first, count) = list_window(&heights, 4, 160.0, 0);
+        assert!(first <= 4 && first + count > 4);
+        let used: f32 = heights[first..first + count].iter().sum();
+        assert!(used <= 160.0);
+        // At the end, room left above is filled.
+        assert_eq!((3, 3), list_window(&heights, 5, 160.0, 5));
+        assert_eq!((0, 0), list_window(&[], 0, 160.0, 0));
+    }
     use crate::ui::strings::{self, UiLanguage};
 
     #[test]
@@ -212,26 +261,30 @@ mod tests {
             ..one
         };
         assert!((two.hint_band() - one.hint_band() - one.hint_line_step()).abs() < 0.01);
-        assert!(two.visible_rows(480.0) < one.visible_rows(480.0));
+        // Rows of the minimum height may still fit beside the second line: never more of them.
+        assert!(two.visible_rows(480.0) <= one.visible_rows(480.0));
+        assert!((400_u16..800).any(|height| {
+            two.visible_rows(f32::from(height)) < one.visible_rows(f32::from(height))
+        }));
     }
 
     #[test]
     fn the_sizes_follow_the_height_of_the_display() {
         let small = Metrics::for_height(480.0);
-        assert!((small.font - 22.0).abs() < f32::EPSILON);
+        assert!((small.font - 18.0).abs() < f32::EPSILON);
         assert!(small.row >= MINIMUM_ROW);
         let square = Metrics::for_height(720.0);
         assert!(square.font > small.font && square.row > small.row);
         // Even a tiny display keeps a readable font and a row to press.
         let tiny = Metrics::for_height(240.0);
-        assert!(tiny.font >= 20.0 && tiny.row >= MINIMUM_ROW);
+        assert!(tiny.font >= 14.0 && tiny.row >= MINIMUM_ROW);
     }
 
     #[test]
     fn a_480_high_display_shows_a_screenful_of_rows() {
         let metrics = Metrics::for_height(480.0);
         let rows = metrics.visible_rows(480.0);
-        assert!((6..=10).contains(&rows), "{rows}");
+        assert!((6..=12).contains(&rows), "{rows}");
         let rows_height = f32::from(u16::try_from(rows).unwrap()) * metrics.row;
         let used = metrics.title_band() + rows_height + metrics.hint_band();
         assert!(used <= 480.0);

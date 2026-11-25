@@ -132,6 +132,7 @@ fn req_pub_001_the_default_3d_entry_converts_in_3d_and_the_2d_entry_does_not() {
             two_dimensional_mode,
             console_interface: false,
             tiles: None,
+            engine: zax_core_api::EngineKind::Zaxnes,
         };
         GameSession::create(request, &mut SettingsModel::new()).unwrap()
     };
@@ -233,6 +234,8 @@ fn req_pub_002_the_repository_carries_no_asset_file() {
     let mut stowaways: Vec<String> = Vec::new();
     let mut branding = 0;
     let mut demo = 0;
+    let mut profiles = 0;
+    let mut web_fonts = 0;
     for entry in WalkDir::new(repository)
         .into_iter()
         .filter_entry(|entry| {
@@ -272,6 +275,13 @@ fn req_pub_002_the_repository_carries_no_asset_file() {
             } else if relative.starts_with("rust/crates/zax-app/demo") {
                 // and the game made for Zaxnes and its 3D profile (FlappyZaxNes)
                 demo += 1;
+            } else if relative.starts_with("rust/profiles") {
+                // and the 3D profiles made for Zaxnes
+                profiles += 1;
+            } else if relative.starts_with("rust/web/fonts") {
+                // and the web build's interface face (Roboto, Apache-2.0): a page cannot read the
+                // system's faces
+                web_fonts += 1;
             } else {
                 stowaways.push(relative.display().to_string());
             }
@@ -283,6 +293,15 @@ fn req_pub_002_the_repository_carries_no_asset_file() {
         let notices = std::fs::read_to_string(repository.join("ASSETS-LICENSES.md")).unwrap();
         assert!(notices.contains("branding/"));
         assert!(notices.contains("GPL-3.0"));
+    }
+    if profiles > 0 {
+        let notices = std::fs::read_to_string(repository.join("ASSETS-LICENSES.md")).unwrap();
+        assert!(notices.contains("rust/profiles/"));
+    }
+    if web_fonts > 0 {
+        let notices = std::fs::read_to_string(repository.join("ASSETS-LICENSES.md")).unwrap();
+        assert!(notices.contains("rust/web/fonts/"));
+        assert!(notices.contains("Apache-2.0"));
     }
     if demo > 0 {
         let notices = std::fs::read_to_string(repository.join("ASSETS-LICENSES.md")).unwrap();

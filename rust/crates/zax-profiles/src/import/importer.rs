@@ -12,8 +12,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::installation::locate_bundle;
-use super::profile_bundle::read_text_assets;
+use super::source::read_profile_source;
 use super::text_asset::UnityTextAsset;
 use super::UnityAssetFormatError;
 use crate::catalogue::{ProfileFileSystem, UserProfileFolder};
@@ -171,8 +170,9 @@ impl<'a> ThreeDSenImporter<'a> {
         &self,
         installation_or_bundle_path: &Path,
     ) -> Result<ThreeDSenImportSummary, ThreeDSenImportError> {
-        let bundle = locate_bundle(self.files, installation_or_bundle_path)?;
-        let assets = read_text_assets(&self.files.read_all_bytes(&bundle)?)?;
+        // A bundle, an installation, an archive holding either, or an old version's data file
+        // (owner request, 2026-11-20); refused when it holds no 3dSen profile.
+        let (bundle, assets) = read_profile_source(self.files, installation_or_bundle_path)?;
         Ok(self.import(&bundle, &assets)?)
     }
 
@@ -189,11 +189,29 @@ impl<'a> ThreeDSenImporter<'a> {
     ) -> io::Result<ThreeDSenImportSummary> {
         self.files.create_directory(&self.destination)?;
 
-        let results = assets.iter().map(|asset| self.import_one(asset)).collect();
+        let results = assets
+            .iter()
+            .filter(|asset| !self.skips_embedded_rom(asset))
+            .map(|asset| self.import_one(asset))
+            .collect();
         let summary = ThreeDSenImportSummary::new(bundle_path, results);
         self.log
             .information(&format!("{}: {}", bundle_path.display(), summary.message()));
         Ok(summary)
+    }
+
+    /// AMD-067 REQ-IMP-090: a `TextAsset` whose content starts with the iNES header is the ROM
+    /// 3dSen 2.2 ships beside a homebrew's profile. It is neither imported, nor failed, nor
+    /// already present, and nothing is written for it; the profile of the same name still is.
+    /// A shorter start (`NES` without its `0x1A`) is not one and fails as before.
+    fn skips_embedded_rom(&self, asset: &UnityTextAsset) -> bool {
+        const INES_MAGIC: &[u8; 4] = b"NES\x1A";
+        let rom = asset.script.starts_with(INES_MAGIC);
+        if rom {
+            self.log
+                .information(&format!("Embedded ROM skipped: {}", asset.name));
+        }
+        rom
     }
 
     fn import_one(&self, asset: &UnityTextAsset) -> ThreeDSenProfileResult {

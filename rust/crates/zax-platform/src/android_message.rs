@@ -1,8 +1,10 @@
 //! Xnes3D+: a message from the native side to the Android activity
 //! (`SDL_AndroidSendMessage`, which reaches `SDLActivity.onUnhandledMessage` on the Java side).
 
-/// SDL's user messages start here (lower numbers are SDL's own commands).
-pub const FIRST_USER_MESSAGE: u32 = 0x8000;
+/// The Xnes3D+ messages start here. SDL's user messages start at 0x8000 and Zaxnes uses the
+/// first ones (the screen orientation is 0x8001), so Xnes3D+ keeps well above them. Must match
+/// XNES_MESSAGES in ZaxnesActivity.java.
+pub const FIRST_USER_MESSAGE: u32 = 0x8100;
 
 /// Sends the user message `FIRST_USER_MESSAGE + number` to the activity. False off Android, or
 /// when SDL refused it.

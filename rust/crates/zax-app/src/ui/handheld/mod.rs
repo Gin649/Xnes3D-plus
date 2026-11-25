@@ -113,6 +113,15 @@ struct ControlsState {
 
 /// Xnes3D+: how long presses are ignored once a capture ends.
 const AFTER_CAPTURE_SECONDS: f32 = 0.3;
+/// A list scrolled away from its selection (owner request).
+#[derive(Debug, Clone, Copy, Default)]
+struct ListScroll {
+    /// The first row the scrollbar, the wheel or a finger scrolled the list to; none while the
+    /// list follows its selection, which any press of the pad brings back.
+    first: Option<usize>,
+    /// Whether the pointer holds the scrollbar.
+    dragging: bool,
+}
 
 /// The handheld interface.
 pub struct HandheldUi {
@@ -140,6 +149,14 @@ pub struct HandheldUi {
     overscan: OverscanModel,
     keys: KeyConfigModel,
     combo: ExitCombo,
+    /// Seconds until the next look for a game another application asked for
+    /// (`launch_request`).
+    launch_wait: f32,
+    /// The ROM another application asked for and wants to have back on quitting it.
+    /// Xnes3D+: never read, because "Quit to game list" always goes to the game list (owner
+    /// request) and the Android side never writes Zaxnes' request file (Xnes3D+ has its own).
+    #[allow(dead_code)]
+    return_on_quit: Option<std::path::PathBuf>,
     metrics: Metrics,
     heading_font: Option<imgui::FontId>,
     effects: Vec<UiEffect>,
@@ -173,6 +190,13 @@ pub struct HandheldUi {
     body_font: Option<imgui::FontId>,
     /// Where the rows and the hints of the last drawn screen lie, for the mouse.
     zones: RefCell<Vec<Zone>>,
+    /// The rank of the selected row of the list drawn last, for the clicks.
+    focus_rank: Cell<Option<usize>>,
+    /// The rows the list drawn last shows and how many a selection can rest on: a page of
+    /// Page Up and Page Down.
+    list_span: Cell<(usize, usize)>,
+    /// The list scrolled by its scrollbar, the wheel or a finger (owner request).
+    scroll: ListScroll,
     /// How many lines the bar of hints took at the last drawing.
     hint_lines: Cell<u8>,
     /// The RetroAchievements screen.
@@ -183,6 +207,9 @@ pub struct HandheldUi {
     /// go (known once drawn).
     list_scroll: f32,
     list_scroll_max: Cell<f32>,
+    /// The first row of the in-game menu shown when it is taller than the screen (owner
+    /// request: a small window, or a page under its browser's bars, scrolls it).
+    overlay_first: Cell<usize>,
     /// The grid of a game's achievements, while it shows, and the screen it goes back to.
     grid: Option<(achievement_grid::AchievementGridModel, Screen)>,
 }
@@ -210,6 +237,8 @@ enum HeadOn {
     Shown,
 }
 
+/// How often the console interface looks for a game another application asked for.
+const LAUNCH_CHECK_SECONDS: f32 = 0.5;
 /// How long L2 is held to keep the camera, and Y to see the game in 2D from the front.
 const CAMERA_KEEP_SECONDS: f32 = 0.6;
 /// How long the widescreen button is held before its settings open.
@@ -251,6 +280,8 @@ impl HandheldUi {
             controls: ControlsState::default(),
             keys: KeyConfigModel::new(),
             combo: ExitCombo::new(),
+            launch_wait: 0.0,
+            return_on_quit: None,
             metrics: Metrics::for_height(height),
             heading_font: None,
             effects: Vec::new(),
@@ -269,11 +300,15 @@ impl HandheldUi {
             pictures: Vec::new(),
             confirming: false,
             zones: RefCell::new(Vec::new()),
+            focus_rank: Cell::new(None),
+            list_span: Cell::new((0, 0)),
+            scroll: ListScroll::default(),
             hint_lines: Cell::new(1),
             achievements: AchievementsModel::new(),
             keyboard: None,
             list_scroll: 0.0,
             list_scroll_max: Cell::new(0.0),
+            overlay_first: Cell::new(0),
             grid: None,
         };
         ui.refresh_roms(host);
@@ -369,7 +404,11 @@ impl HandheldUi {
         self.library = ProfileChooserModel::new(host.games().library())
             .all()
             .to_vec();
-        let mut entries = rom_list::scan(&self.roms_directory);
+        // Web build: the games of the pages of games, downloaded when played (owner request).
+        let mut entries = rom_list::with_remote_games(
+            rom_list::scan(&self.roms_directory),
+            &crate::web_bridge::remote_games(),
+        );
         // The widescreen of the games without one of their own: the global value.
         let mut global = host.settings().clone();
         global.clear_session_layer();
@@ -377,6 +416,13 @@ impl HandheldUi {
         let global_on = global.get(SettingId::VideoWidescreen).as_int() != 0;
         for entry in &mut entries {
             entry.profile = self.profile_of(host, entry);
+            if entry.remote.is_some() {
+                // No file to study nor options of its own yet: its widescreen is the name's.
+                entry.widescreen_other = hacks::other_rom_patch(entry.profile_title(), &entry.name)
+                    .map(|patch| patch.name);
+                entry.widescreen_unstudied = entry.widescreen_other.is_some();
+                continue;
+            }
             Self::find_widescreen(host, entry);
             entry.widescreen_on = host
                 .game_options(&entry.path.to_string_lossy())
@@ -492,6 +538,10 @@ impl HandheldUi {
                 }
             }
             Command::ShowOptions => self.open_options(host),
+            // Web build: the page's own dialogue (prepackaged ROMs, drop, the player's files).
+            Command::OpenRom if crate::web_bridge::active() => {
+                crate::web_bridge::request_open_dialog();
+            }
             other => self.effects.push(UiEffect::Log(format!(
                 "the handheld interface has nothing to do for '{}'.",
                 other.name()
@@ -505,13 +555,22 @@ impl HandheldUi {
             frame.host.launch_rom_with_profile(&rom, &id);
         }
         self.confirming = frame.host.pending_confirmation().is_some();
+        self.take_launch_request(seconds, frame.host);
         self.follow_the_game(frame.host);
         self.update_combo(pad, seconds, frame.host);
+        // A capture that ends this frame ended on the press that was bound: that press, sampled
+        // before this update, is not a press of the screen as well (B would leave the list, A
+        // start another capture). The screen's own guard cannot see it, the capture being over.
+        let capturing = self.screen == Screen::Controls && self.controls.capture_left.is_some();
         self.update_capture(seconds, frame);
+        let capture_ended = capturing && self.controls.capture_left.is_none();
         self.update_camera_memory(pad, seconds, frame.host);
         self.update_flat_view(pad, seconds, frame.host);
         self.update_widescreen_hold(pad, seconds, frame.host);
         self.update_resting_study(seconds, frame.host);
+        if capture_ended {
+            return;
+        }
         let presses: Vec<PadButton> = pad.presses().collect();
         self.pad_l3_r3 = pad.is_held(PadButton::L3) && pad.is_held(PadButton::R3);
         for button in presses.iter().copied() {
@@ -581,12 +640,77 @@ impl HandheldUi {
     /// drawn last frame, as presses of the pad. Nothing in game.
     pub fn update_pointer(&mut self, input: &PointerInput, frame: &mut UiFrame<'_>) {
         if self.screen == Screen::InGame && frame.host.pending_confirmation().is_none() {
+            self.scroll.dragging = false;
             return;
         }
-        let presses = pointer::presses(&self.zones.borrow(), input);
+        // The scrollbar of the list (owner request): grabbed, it scrolls the list as long as it
+        // is held, and selects nothing; let go, it presses nothing either.
+        let bar = self
+            .zones
+            .borrow()
+            .iter()
+            .find(|zone| matches!(zone.action, pointer::ZoneAction::Scrollbar { .. }))
+            .copied();
+        if self.scroll.dragging {
+            if input.button == pointer::Hold::Up {
+                self.scroll.dragging = false;
+            } else if let Some(first) =
+                bar.and_then(|bar| pointer::scrolled_first(&bar, input.position[1]))
+            {
+                self.scroll.first = Some(first);
+            }
+            return;
+        }
+        if input.button == pointer::Hold::Pressed {
+            if let Some(bar) = bar.filter(|bar| bar.contains(input.position)) {
+                self.scroll.dragging = true;
+                self.scroll.first = pointer::scrolled_first(&bar, input.position[1]);
+                return;
+            }
+        }
+        // The wheel and a finger's slide scroll the list too, without moving its selection.
+        let mut input = *input;
+        if let Some(pointer::Zone {
+            action: pointer::ZoneAction::Scrollbar { first, rows, total },
+            ..
+        }) = bar
+        {
+            #[allow(clippy::cast_possible_truncation)] // a few notches
+            let notches = input.wheel.round() as i64;
+            if notches != 0 {
+                let last = i64::try_from(total.saturating_sub(rows)).unwrap_or(0);
+                let first = i64::try_from(first).unwrap_or(0);
+                let next = (first - notches).clamp(0, last);
+                self.scroll.first = usize::try_from(next).ok();
+            }
+            input.wheel = 0.0;
+        } else {
+            // The in-game menu has no scrollbar: the wheel and a finger's slide move its
+            // selection, the rows it shows following it when it is taller than the screen.
+            #[allow(clippy::cast_possible_truncation)] // a few notches
+            let notches = input.wheel.round() as i64;
+            if self.screen == Screen::Overlay && notches != 0 {
+                let button = if notches > 0 {
+                    PadButton::Up
+                } else {
+                    PadButton::Down
+                };
+                for _ in 0..notches.unsigned_abs() {
+                    self.press(button, frame);
+                }
+            }
+            input.wheel = 0.0;
+        }
+        let presses = pointer::presses(&self.zones.borrow(), &input, self.focus_rank.get());
         for button in presses {
             self.press(button, frame);
         }
+    }
+
+    /// Whether the pointer holds the scrollbar of a list: a finger doing so does not swipe.
+    #[must_use]
+    pub const fn scroll_dragging(&self) -> bool {
+        self.scroll.dragging
     }
 
     /// The list resting [`STUDY_AFTER_SECONDS`] on a game not studied yet studies its ROM (owner
@@ -795,6 +919,38 @@ impl HandheldUi {
         }
     }
 
+    /// A game another application asked for (an Android frontend): played at once, in place
+    /// of the one playing. Looked for twice a second.
+    fn take_launch_request(&mut self, seconds: f32, host: &mut AppHost) {
+        self.launch_wait -= seconds;
+        if self.launch_wait > 0.0 {
+            return;
+        }
+        self.launch_wait = LAUNCH_CHECK_SECONDS;
+        let Some(request) = crate::launch_request::take(&host.paths().root) else {
+            return;
+        };
+        crate::app_log::line(&format!("launch request: {}", request.rom.display()));
+        self.return_on_quit = request.return_on_quit.then(|| request.rom.clone());
+        // Played as from the list: the profile that matches it, else in 2D.
+        if self.library.is_empty() {
+            self.refresh_roms(host);
+        }
+        let entry = RomEntry::new(request.rom);
+        let profile = self
+            .profile_of(host, &entry)
+            .map(|profile| profile.id)
+            .or_else(|| host.games().two_dimensional_mode_id());
+        let rom = entry.path.to_string_lossy();
+        match profile {
+            Some(id) => host.launch_rom_with_profile(&rom, &id),
+            None => host.enqueue(Command::OpenRom, CommandArgs::of_text(&rom)),
+        }
+        if matches!(self.screen, Screen::Overlay | Screen::States) {
+            self.screen = Screen::InGame;
+        }
+    }
+
     /// A binding that waits too long is given up.
     fn update_capture(&mut self, seconds: f32, frame: &mut UiFrame<'_>) {
         self.controls.after_capture = (self.controls.after_capture - seconds).max(0.0);
@@ -812,7 +968,43 @@ impl HandheldUi {
         }
     }
 
+    /// A screenful of rows (owner request): that many presses of up or down, stopping at the
+    /// list's ends rather than going round.
+    fn press_page(&mut self, button: PadButton, frame: &mut UiFrame<'_>) {
+        let (rows, count) = self.list_span.get();
+        let focus = self.focus_rank.get().unwrap_or(0);
+        let room = rows.saturating_sub(1).max(1);
+        let (step, presses) = if button == PadButton::PageUp {
+            (PadButton::Up, room.min(focus))
+        } else {
+            (
+                PadButton::Down,
+                room.min(count.saturating_sub(1).saturating_sub(focus)),
+            )
+        };
+        for _ in 0..presses {
+            self.press(step, frame);
+        }
+        // The rank the presses reached, for a second page before the next drawing.
+        self.focus_rank.set(Some(if button == PadButton::PageUp {
+            focus - presses
+        } else {
+            focus + presses
+        }));
+    }
+
     fn press(&mut self, button: PadButton, frame: &mut UiFrame<'_>) {
+        // A press brings the list back round its selection (a scrolled list follows it again).
+        self.scroll.first = None;
+        if let PadButton::PageUp | PadButton::PageDown = button {
+            self.press_page(button, frame);
+        } else {
+            self.press_button(button, frame);
+        }
+    }
+
+    /// One press of a button of the pad on the screen shown.
+    fn press_button(&mut self, button: PadButton, frame: &mut UiFrame<'_>) {
         // A question of the host (a save state made with the built-in patches set the other
         // way, for instance) is answered first: A agrees, B declines.
         if frame.host.pending_confirmation().is_some() {
@@ -943,6 +1135,41 @@ impl HandheldUi {
     }
 
     fn carry_out_home(&mut self, command: RomListCommand, host: &mut AppHost) {
+        // A game of a page of games: played once the page downloaded it, which then answers as
+        // for any ROM; its file, options and hacks come with the download.
+        let remote = |path: &Path| {
+            self.roms
+                .entries()
+                .iter()
+                .find(|entry| entry.path == path)
+                .and_then(|entry| entry.remote.clone().map(|url| (url, entry.clone())))
+        };
+        match &command {
+            RomListCommand::Play(path) => {
+                if let Some((url, entry)) = remote(path) {
+                    // As for a ROM of the folder: its profile, else "2D Mode".
+                    let profile = entry
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.id.clone())
+                        .or_else(|| host.games().two_dimensional_mode_id());
+                    crate::web_bridge::request_remote_game(&url, &entry.name, profile.as_deref());
+                    return;
+                }
+            }
+            RomListCommand::ChooseProfile(_)
+            | RomListCommand::Options
+            | RomListCommand::ResumeLast
+            | RomListCommand::ToggleFavorite(_) => {}
+            RomListCommand::GameOptions(path)
+            | RomListCommand::Widescreen(path)
+            | RomListCommand::Hacks(path)
+            | RomListCommand::Achievements(path) => {
+                if remote(path).is_some() {
+                    return;
+                }
+            }
+        }
         match command {
             RomListCommand::Play(path) => {
                 let profile = self
@@ -1212,6 +1439,7 @@ impl HandheldUi {
                 Screen::Home
             };
         }
+        self.options.sync(host.settings());
         self.screen = Screen::Options;
     }
 
@@ -1438,12 +1666,15 @@ impl HandheldUi {
                 self.states = StatesModel::new(mode, slot);
                 self.screen = Screen::States;
             }
-            OverlayCommand::ToggleFastForward => {
-                close(self, host);
-                host.enqueue(Command::FastForward, CommandArgs::default());
+            OverlayCommand::SetSpeed(tenths) => {
+                self.overlay.set_speed(tenths);
+                host.set_speed_boost(f64::from(tenths) / 10.0);
             }
             OverlayCommand::SetCamera(preset) => apply_camera(preset, host),
             OverlayCommand::Options => self.open_options(host),
+            // Zaxnes's own bus: nothing to open on an engine without it (FCEUX), which the row says.
+            OverlayCommand::Widescreen | OverlayCommand::Hacks
+                if !draw::playing_with_hacks(host) => {}
             OverlayCommand::Widescreen => {
                 if let Some(rom) = host.current_rom_path().map(PathBuf::from) {
                     let title = host.current_game_title().map(str::to_owned);
@@ -1471,6 +1702,8 @@ impl HandheldUi {
                 host.enqueue(Command::Stop, CommandArgs::default());
                 self.show_home(host);
             }
+            // The page's dialogue shows over the menu, which stays: the game waits behind both.
+            OverlayCommand::WebDialog(dialog) => crate::web_bridge::request_dialog(dialog),
             OverlayCommand::ExitToLauncher => host.enqueue(Command::Quit, CommandArgs::default()),
         }
     }

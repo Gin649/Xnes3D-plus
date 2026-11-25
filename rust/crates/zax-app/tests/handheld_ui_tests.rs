@@ -9,6 +9,7 @@ mod ui_harness;
 use std::path::PathBuf;
 
 use common::SyntheticRom;
+use ui_harness::bundle_support::synthetic_bundle::{self, SyntheticBundleOptions};
 use ui_harness::{ImGuiHarness, UiHarness};
 use zax_app::emulation::emulation_state::EmulationState;
 use zax_app::persistence::app_settings::{AppSettings as _, AppSettingsMut as _};
@@ -293,9 +294,16 @@ fn select_and_start_held_for_a_second_quit_and_a_tap_does_not() {
 #[test]
 fn the_options_change_the_settings_of_the_host() {
     let (mut harness, mut handheld) = start(&[], &["Game.nes"]);
+    // Lot REWRITE-UI: the advanced mode, whose main page this walk follows.
+    harness.host.update_settings(|settings| {
+        settings.set(SettingId::UiOptionsAdvanced, SettingValue::Bool(true));
+    });
     tap(&mut harness, &mut handheld, PadButton::Y);
     assert_eq!(Screen::Options, handheld.screen());
-    tap(&mut harness, &mut handheld, PadButton::Down); // volume
+    // Mode, preset, preset page, language, then the volume.
+    for _ in 0..4 {
+        tap(&mut harness, &mut handheld, PadButton::Down);
+    }
     tap(&mut harness, &mut handheld, PadButton::Left);
     assert!((harness.host.settings().volume() - 0.9).abs() < 1.0e-6);
     for _ in 0..4 {
@@ -317,8 +325,9 @@ fn the_options_change_the_settings_of_the_host() {
     tap(&mut harness, &mut handheld, PadButton::B);
     assert_eq!(Screen::Options, handheld.screen());
     // RO-3: Show FPS and the camera view left the main page for the *Advanced options* hub, so
-    // the region, the shaders (come up from the hub) and the optimisations are the next rows.
-    for _ in 0..3 {
+    // the region, the shaders (come up from the hub) and the optimisations are the next rows;
+    // lot REWRITE-UI put the widescreen page between the region and the shaders.
+    for _ in 0..4 {
         tap(&mut harness, &mut handheld, PadButton::Down);
     }
     // The optimizations page, on its frame cap row.
@@ -737,4 +746,120 @@ fn another_version_of_a_widened_game_is_studied_when_its_hacks_open() {
         .join("roms")
         .join("Zelda II - The Adventure of Link (Europe).nes");
     assert_eq!(0, harness.host.game_options(&rom.to_string_lossy()).len());
+}
+
+/// The press that a capture of the Controls screen binds is not a press of the screen too: B
+/// ending a capture stays on the list (it used to leave it), the next B leaves it.
+#[test]
+fn the_press_that_ends_a_capture_is_not_a_press_of_the_screen() {
+    let (mut harness, mut handheld) = start(&[], &["Game.nes"]);
+    let pad = common::FakeGamepad::new("Pad");
+    harness.pads.plug(&pad);
+    {
+        use zax_platform::input::GamepadHub as _;
+        let hub = &harness.pads;
+        harness.input.edit(|bindings, pads, _| {
+            pads.skip_startup_delay(hub, bindings);
+            pads.assign(bindings, 0, hub.devices().first().map(|device| &**device));
+        });
+    }
+    handheld.arrange_for_capture(Screen::Controls);
+    tap(&mut harness, &mut handheld, PadButton::A);
+    assert!(
+        harness.input.rebinding().is_listening(),
+        "A starts a capture"
+    );
+    // The sample that starts the listening, then the one the press of the pad's button ends it in.
+    harness.sample(1.0 / 60.0);
+    pad.press(zax_platform::input::standard_gamepad::EAST);
+    harness.sample(1.0 / 60.0);
+    assert!(
+        !harness.input.rebinding().is_listening(),
+        "the press is bound"
+    );
+    // The same press reaches the screen as B in that frame.
+    tap(&mut harness, &mut handheld, PadButton::B);
+    assert_eq!(Screen::Controls, handheld.screen());
+    pad.release_all();
+    tap(&mut harness, &mut handheld, PadButton::B);
+    assert_ne!(Screen::Controls, handheld.screen());
+}
+
+/// A game an Android frontend asks for (the request file the activity writes) plays at once,
+/// and quitting it goes back to the frontend rather than to the list (GitHub issue #1).
+#[test]
+fn a_game_a_frontend_asks_for_plays_and_quitting_goes_back_to_it() {
+    let (mut harness, mut handheld) = start(&[], &["Game.nes"]);
+    let elsewhere = harness.root.path().join("frontend");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let rom = elsewhere.join("Asked.nes");
+    std::fs::write(&rom, SyntheticRom::counter()).unwrap();
+    let folder = harness.paths.root.join(zax_app::launch_request::FOLDER);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join(zax_app::launch_request::FILE),
+        format!("rom={}\nreturn=1\n", rom.display()),
+    )
+    .unwrap();
+    press(&mut harness, &mut handheld, &[]);
+    harness.settle();
+    press(&mut harness, &mut handheld, &[]);
+    assert!(harness.host.current_game_id().is_some(), "the game plays");
+    assert_eq!(Screen::InGame, handheld.screen());
+    assert!(!folder.join(zax_app::launch_request::FILE).exists());
+    // The menu, then Quit to ROM list (the ninth row): the application quits.
+    tap(&mut harness, &mut handheld, PadButton::Menu);
+    for _ in 0..8 {
+        tap(&mut harness, &mut handheld, PadButton::Down);
+    }
+    tap(&mut harness, &mut handheld, PadButton::A);
+    harness.settle();
+    assert!(harness.host.quit_requested());
+}
+
+/// A 3dSen bundle opened with or shared to Zaxnes on Android (the activity copies it into the
+/// import folder) is imported by the application's loop, then marked done (owner request,
+/// 2026-11-20).
+#[test]
+fn a_bundle_in_the_import_folder_is_imported_and_marked_done() {
+    use zax_profiles::import::{UnityCompression, BUNDLE_EXTENSION, BUNDLE_PREFIX};
+    let (mut harness, mut handheld) = start(&[], &["Game.nes"]);
+    let mut profile = zax_profiles::profile::GameProfile::create_empty();
+    profile.id = Some("ABCDEFGHIJKL".to_owned());
+    profile.title = Some("Pinball".to_owned());
+    zax_profiles::export::normalize(&mut profile, None).expect("a valid profile");
+    let bytes = zax_profiles::format::save(&profile, zax_profiles::layout::FieldPresence::All);
+    let bundle = synthetic_bundle::build(
+        &[("Pinball", bytes)],
+        &SyntheticBundleOptions {
+            block_compression: UnityCompression::Lz4,
+            block_size: 128 * 1024,
+            info_at_end: true,
+            ..SyntheticBundleOptions::default()
+        },
+    );
+    let folder = harness
+        .paths
+        .root
+        .join(zax_app::launch_request::IMPORT_FOLDER);
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join(format!("{BUNDLE_PREFIX}feedface{BUNDLE_EXTENSION}"));
+    std::fs::write(&file, bundle).unwrap();
+    assert_eq!(1, zax_app::import_folder::process(&mut harness.host));
+    // Done once: the next look imports nothing.
+    assert_eq!(0, zax_app::import_folder::process(&mut harness.host));
+    press(&mut harness, &mut handheld, &[]);
+    assert!(harness
+        .paths
+        .profiles_directory
+        .join("Pinball.3dn")
+        .is_file());
+    // The bundle stays, marked imported (owner request, 2026-11-20): not imported again.
+    assert!(file.exists());
+    assert!(std::fs::read_to_string(
+        folder.join(format!("{BUNDLE_PREFIX}feedface{BUNDLE_EXTENSION}.done"))
+    )
+    .unwrap()
+    .starts_with("ok"));
+    assert!(folder.join("README.txt").is_file());
 }

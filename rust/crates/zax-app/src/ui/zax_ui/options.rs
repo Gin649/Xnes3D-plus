@@ -11,6 +11,7 @@ use zax_settings::values::{Color, SettingValue};
 use super::{centre, play, BrowserPurpose, ZaxUi};
 use crate::application::AppHost;
 use crate::audio::UiSound;
+use crate::emulation::fceux_validated;
 use crate::ui::options::{self, CompactRow, OptionsGroup, OptionsRow, TabEntry};
 use crate::ui::{strings, text};
 
@@ -40,6 +41,10 @@ impl ZaxUi {
             .opened(&mut open)
             .begin();
         if let Some(_window) = window {
+            // Lot REWRITE-UI: the way to the new window, while the two are compared.
+            if ui.button(strings::get("options.new.to_new")) {
+                self.options_classic = false;
+            }
             // RO-1: nine tabs. Scrolling keeps every title readable where the window is too narrow
             // for all of them; the default policy would shrink them to an ellipsis instead.
             if let Some(_bar) =
@@ -58,7 +63,7 @@ impl ZaxUi {
     }
 
     /// One tab: its reset button, then its entries in the order [`options::LAYOUT`] gives them.
-    fn draw_options_tab(
+    pub(super) fn draw_options_tab(
         &mut self,
         ui: &Ui,
         host: &mut AppHost,
@@ -77,11 +82,28 @@ impl ZaxUi {
         let Some(_item) = shown else {
             return;
         };
+        self.draw_tab_body(ui, host, tab);
+    }
+
+    /// The body of a tab, under its title: its reset button, then its entries (lot REWRITE-UI:
+    /// the new window draws several of them in one of its own tabs).
+    pub(super) fn draw_tab_body(&mut self, ui: &Ui, host: &mut AppHost, tab: options::OptionsTab) {
         if ui.button(text::reset_defaults()) {
             host.update_settings(|model| self.options.reset_tab(model, tab));
             play(host, UiSound::Confirm);
         }
         ui.separator();
+        self.draw_tab_entries(ui, host, tab);
+    }
+
+    /// The entries of a tab, without its reset button (lot REWRITE-UI: the new window has its
+    /// own, which takes the chosen preset's values).
+    pub(super) fn draw_tab_entries(
+        &mut self,
+        ui: &Ui,
+        host: &mut AppHost,
+        tab: options::OptionsTab,
+    ) {
         if tab == options::OptionsTab::Achievements
             && crate::ui::achievements_view::draw_account(ui, host, &mut self.sign_in)
         {
@@ -92,6 +114,9 @@ impl ZaxUi {
         let run_ahead_forced = host
             .session()
             .is_some_and(crate::game_session::GameSession::forces_run_ahead_to_zero);
+        // Lot FCEUX-48 step 2: whether the ROM in play is one lot FCEUX-6 validated for 3D on
+        // FCEUX, read once for the whole tab like the line above — only the engine row shows it.
+        let fceux_validation = host.fceux_validation();
         // AMD-055 §3 point 6: the style parameters live in a collapsible group, whose rows are
         // drawn only while the style is Enhanced. Read once for the whole tab.
         let style_note = options::style_group_note(host.settings());
@@ -111,7 +136,7 @@ impl ZaxUi {
                     if options::is_folder(&row) {
                         self.draw_folder_row(ui, host, &row);
                     } else {
-                        draw_row(ui, host, &row, run_ahead_forced);
+                        draw_row(ui, host, &row, run_ahead_forced, fceux_validation);
                     }
                 }
                 TabEntry::Compact(compact, cells) => {
@@ -125,7 +150,7 @@ impl ZaxUi {
 
     /// A folder setting: a field written on Enter or when it loses the focus, and a button
     /// that picks the folder (Rust-only, the ROM folder of the console mode).
-    fn draw_folder_row(&mut self, ui: &Ui, host: &mut AppHost, row: &OptionsRow) {
+    pub(super) fn draw_folder_row(&mut self, ui: &Ui, host: &mut AppHost, row: &OptionsRow) {
         let id = row.descriptor.id();
         let _id = ui.push_id(row.descriptor.key());
         let stored = host.settings().get(id).as_text().to_owned();
@@ -218,7 +243,12 @@ fn draw_group_heading(ui: &Ui, group: OptionsGroup, style_note: Option<&str>) ->
 /// Every one of the four is still its own setting, edited by its own widget and written through
 /// the same path a row of its own used: a change plays the validation sound, the reset button of
 /// the tab reaches all four, and the settings file is untouched. Only the place changes.
-fn draw_compact_row(ui: &Ui, host: &mut AppHost, compact: CompactRow, cells: &[OptionsRow; 4]) {
+pub(super) fn draw_compact_row(
+    ui: &Ui,
+    host: &mut AppHost,
+    compact: CompactRow,
+    cells: &[OptionsRow; 4],
+) {
     let _id = ui.push_id(compact.title());
     ui.text(compact.title());
     for (cell, caption) in cells.iter().zip(options::COMPACT_CAPTIONS) {
@@ -242,8 +272,15 @@ fn draw_compact_row(ui: &Ui, host: &mut AppHost, compact: CompactRow, cells: &[O
 }
 
 /// One row of a tab. `run_ahead_forced` is Q-103's verdict on the running game, which only the
-/// Run-ahead row shows.
-fn draw_row(ui: &Ui, host: &mut AppHost, row: &OptionsRow, run_ahead_forced: bool) {
+/// Run-ahead row shows; `fceux_validation` is lot FCEUX-6's verdict on it, which only the engine
+/// row shows.
+pub(super) fn draw_row(
+    ui: &Ui,
+    host: &mut AppHost,
+    row: &OptionsRow,
+    run_ahead_forced: bool,
+    fceux_validation: fceux_validated::Status,
+) {
     let descriptor = row.descriptor;
     let id = descriptor.id();
     let _id = ui.push_id(descriptor.key());
@@ -306,6 +343,12 @@ fn draw_row(ui: &Ui, host: &mut AppHost, row: &OptionsRow, run_ahead_forced: boo
     if let Some(note) = options::forced_run_ahead_note(id, run_ahead_forced) {
         ui.same_line();
         side_note(ui, &note);
+    }
+    // Lot FCEUX-48 step 2: the engine row says whether this ROM is validated for 3D on FCEUX. The
+    // row stays live — the option is available for every game, which is the owner's choice.
+    if let Some(note) = options::fceux_validation_note(id, host.settings(), fceux_validation) {
+        ui.same_line();
+        ui.text_disabled(note);
     }
     if hovered {
         draw_tooltip(ui, id);

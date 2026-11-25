@@ -17,7 +17,7 @@ use zax_settings::values::SettingValue;
 const PIPELINE_AUTO: i32 = 1;
 
 /// Every switch one handheld default sets.
-fn defaults() -> [(SettingId, SettingValue); 14] {
+fn defaults() -> [(SettingId, SettingValue); 13] {
     [
         // AMD-055 REQ-SCN-079, the two quality rungs. The style itself is **Classic** on a
         // handheld as on the desktop — that is the setting's own default (REQ-SCN-078) and at
@@ -79,19 +79,33 @@ fn defaults() -> [(SettingId, SettingValue); 14] {
         // measured worse there than both None and 5 once the core had its own thread, because
         // the second frame of a pair waits for the emulation thread in series.
         (SettingId::EmuCatchUp, SettingValue::Enum(5)),
-        // The smooth scrolling from the run-ahead does nothing without run-ahead or at 60 Hz,
-        // and both are the handheld's case. Kept as an explicit handheld default even though
-        // KIRBY-MERGE made the catalogue default `false` as well (`docs/progress/KIRBY-MERGE.md`
-        // §2.4, (S4)): if the global default ever goes back on, the handheld still says no.
-        (SettingId::EmuSmoothScrollAhead, SettingValue::Bool(false)),
+        // `emu.smooth_scroll_ahead` follows the catalogue and the presets, on (owner,
+        // 2026-11-20): it does nothing without run-ahead (0 here) or at 60 Hz, the handhelds'
+        // case, so it costs nothing; a 120 Hz screen with run-ahead gets it.
     ]
 }
 
-/// Makes the handheld values the defaults of `model`.
+/// Makes the handheld values the defaults of `model`: those of the fastest preset (lot
+/// REWRITE-UI: a handheld starts on "Fastest", which its options show as the chosen preset),
+/// then the handheld's own, which agree with it where both set a value.
 pub fn apply(model: &mut SettingsModel) {
+    apply_fastest(model);
     for (id, value) in defaults() {
         model.set_environment_default(id, value);
     }
+    // The owner's earlier decision stands over the preset: the automatic resolution stays a
+    // choice of the options, off by default (see the module's head).
+    model.set_environment_default(SettingId::VideoDynamicResolution, SettingValue::Bool(false));
+}
+
+/// Makes the fastest preset's values the defaults of `model`, and the preset the one shown as
+/// chosen (the handheld, and the web build: owner request).
+pub fn apply_fastest(model: &mut SettingsModel) {
+    let fastest = &crate::ui::presets::PRESETS[0];
+    for &(id, value, _) in fastest.values {
+        model.set_environment_default(id, value.value());
+    }
+    model.set_environment_default(SettingId::UiOptionsPreset, SettingValue::Enum(0));
 }
 
 /// The defaults of the Android package (owner decision): the desktop's, but for the Lua paths,
@@ -112,6 +126,20 @@ pub fn apply_android(model: &mut SettingsModel) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lot REWRITE-UI: a handheld starts on the fastest preset, but for the automatic
+    /// resolution, off by an earlier owner decision.
+    #[test]
+    fn a_handheld_starts_on_the_fastest_preset() {
+        let mut model = SettingsModel::new();
+        apply(&mut model);
+        assert_eq!(0, crate::ui::presets::chosen(&model));
+        for &(id, value, _) in crate::ui::presets::PRESETS[0].values {
+            if id != SettingId::VideoDynamicResolution {
+                assert_eq!(value.value(), model.get(id), "{}", id.key());
+            }
+        }
+    }
     use crate::persistence::app_settings::AppSettings as _;
 
     #[test]
