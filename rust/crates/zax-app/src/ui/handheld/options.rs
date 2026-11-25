@@ -474,6 +474,8 @@ fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
         AndroidAction::CopyProfiles => "Copy".to_owned(),
         AndroidAction::CheckUpdates => format!("v{}", crate::android_bridge::app_version()),
     }
+}
+
 /// The rows of the touch screen's page (owner request): the pad, its size, its vibrations and its
 /// rewind and fast-forward buttons.
 pub const TOUCH_SCREEN_ROWS: [OptionRow; 6] = [
