@@ -29,7 +29,7 @@
 //!
 //! The numbers are first values to be tuned on real games.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::engine::build_geometry;
 use crate::frame::{ConversionFrame, FrameTile, ShapeId};
@@ -44,6 +44,8 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// profile).
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
+    // Each game starts with no sky found yet.
+    SKY.store(NO_SKY, Ordering::Relaxed);
 }
 
 /// True while the game plays with Smart 3D.
@@ -279,6 +281,18 @@ const SKY_SHARE: f32 = 0.30;
 const SKY_LOWEST_MEAN_Y: i64 = 120;
 /// How far back the sky goes, in pixels: two layers behind the scenery's front.
 const SKY_PUSH: f32 = 24.0;
+/// Xnes3D+: once a sky is found, it stays the sky while plain tiles of its colour make at least
+/// this share of the background. Without this, the sky went back only while it filled 30% of
+/// the screen, so scrolling past tall buildings (Darkwing Duck) brought it forward flush with
+/// the scenery, which then looked flat, and near that limit it flipped every few frames.
+const SKY_KEEP_SHARE: f32 = 0.05;
+/// A remembered sky is still not used when its plain tiles sit, on average, below this row: then
+/// that colour is most likely a floor or water here, not the sky.
+const SKY_KEEP_LOWEST_MEAN_Y: i64 = 160;
+/// The value of `SKY` when no sky has been found yet.
+const NO_SKY: u8 = 0xFF;
+/// Xnes3D+: the NES colour of the sky found earlier in this game, or `NO_SKY`.
+static SKY: AtomicU8 = AtomicU8::new(NO_SKY);
 
 /// True when the tile is plain: all its pixels drawn, in one colour.
 fn is_plain(tile: &FrameTile) -> bool {
@@ -311,16 +325,27 @@ fn sky_color(frame: &ConversionFrame) -> Option<u8> {
             }
         }
     }
-    let (color, (count, rows)) = counts
+    #[allow(clippy::cast_precision_loss)] // at most a few thousand tiles
+    let share = |count: u32| count as f32 / total.max(1) as f32;
+    let mean_row = |count: u32, rows: i64| rows / i64::from(count.max(1));
+    // Xnes3D+: the sky found earlier stays the sky while some of it is still on screen, so it
+    // does not jump forward and back as the scenery covers more or less of it.
+    let remembered = SKY.load(Ordering::Relaxed);
+    if let Some(&(count, rows)) = counts.get(usize::from(remembered)) {
+        if share(count) >= SKY_KEEP_SHARE && mean_row(count, rows) < SKY_KEEP_LOWEST_MEAN_Y {
+            return Some(remembered);
+        }
+    }
+    let (color, &(count, rows)) = counts
         .iter()
         .enumerate()
         .max_by_key(|(_, (count, _))| *count)?;
-    #[allow(clippy::cast_precision_loss)] // at most a few thousand tiles
-    let share = *count as f32 / total.max(1) as f32;
-    if share < SKY_SHARE || rows / i64::from((*count).max(1)) >= SKY_LOWEST_MEAN_Y {
+    if share(count) < SKY_SHARE || mean_row(count, rows) >= SKY_LOWEST_MEAN_Y {
         return None;
     }
-    u8::try_from(color).ok()
+    let color = u8::try_from(color).ok()?;
+    SKY.store(color, Ordering::Relaxed);
+    Some(color)
 }
 
 /// True when at least half of the tile's pixels show `sky`: a plain sky tile, or the edge of the
