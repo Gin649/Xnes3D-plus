@@ -70,7 +70,7 @@ def main(archive, out):
                             "d": text(element, "Developer"),
                             "p": text(element, "Publisher"),
                             "pl": text(element, "MaxPlayers"),
-                            "g": text(element, "Genres").replace(";", ", "),
+                            "g": ", ".join(part.strip() for part in text(element, "Genres").split(";") if part.strip()),
                             "o": text(element, "Overview"),
                             "pf": "fds" if "Famicom" in text(element, "Platform") else "nes",
                         }

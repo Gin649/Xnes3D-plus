@@ -43,6 +43,12 @@ import java.util.Map;
 final class GameMedia {
     static final String INDEX_URL =
         "https://raw.githubusercontent.com/Gin649/Xnes3D-plus/main/community/launchbox-nes.json";
+    /**
+     * Where the index is while the box art work is not merged into main yet (test builds of
+     * the port-0.6.1 branch). Tried only when the main one can't be had.
+     */
+    static final String INDEX_URL_BRANCH =
+        "https://raw.githubusercontent.com/Gin649/Xnes3D-plus/port-0.6.1/community/launchbox-nes.json";
     /** Must match MEDIA_REQUEST_FILE and MEDIA_DONE_FILE in zax-app's android_bridge.rs. */
     static final String REQUEST_FILE = "media-request.txt";
     static final String DONE_FILE = "media-done.txt";
@@ -206,7 +212,11 @@ final class GameMedia {
         boolean old = !kept.isFile() || System.currentTimeMillis() - kept.lastModified() > INDEX_MAX_AGE_MS;
         if (old) {
             try {
-                data = download(INDEX_URL, 64 * 1024 * 1024);
+                try {
+                    data = download(INDEX_URL, 64 * 1024 * 1024);
+                } catch (Exception onMain) {
+                    data = download(INDEX_URL_BRANCH, 64 * 1024 * 1024);
+                }
                 File part = new File(kept.getPath() + ".part");
                 try (FileOutputStream out = new FileOutputStream(part)) {
                     out.write(data);
