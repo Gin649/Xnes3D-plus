@@ -1,7 +1,7 @@
 //! The command model over the host: whether a command can run, its toggle state, and what
 //! running it does (SPEC-10 REQ-UI-205).
 
-use zax_nes::ControllerPortType;
+use zax_core_api::ControllerPortType;
 use zax_render::camera::CameraMode;
 
 use super::{EmulationHost, GameView, HostEvent};
@@ -10,8 +10,9 @@ use crate::emulation::emulation_state::EmulationState;
 use crate::emulation::game_catalog::GameCatalog;
 use crate::emulation::notification_center::{NotificationSeverity, SHORT_SECONDS};
 use crate::emulation::speed_setting;
-use crate::game_session::GameSession;
+use crate::game_session::{DiskChange, GameSession};
 use crate::persistence::app_settings::{AppSettings, AppSettingsMut, TvRegionSetting};
+use crate::persistence::console_model::ConsoleModel;
 use crate::persistence::save_slots::{is_valid_slot_id, numbered_slot_id, QUICK_SLOT_ID};
 
 impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
@@ -26,35 +27,25 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             | Command::ChooseProfile
             | Command::ImportProfile
             | Command::ImportThreeDSen
+            | Command::ImportThreeDSenSteam
+            | Command::ImportThreeDSenBundle
+            | Command::ImportThreeDSenArchive
             | Command::SetCameraMode => !loading,
-            Command::LaunchGame => {
-                !loading && args.text.as_deref().is_some_and(|text| !text.is_empty())
+            Command::LaunchGame => !loading && has_text(args),
+            Command::Reset | Command::ToggleTwoDimensional => {
+                !loading && self.current_game.is_some()
             }
-            Command::DeleteGame => {
-                let game = args
-                    .text
-                    .as_deref()
-                    .or_else(|| self.current_game_id())
-                    .unwrap_or_default();
-                !loading && self.games.can_delete(game)
-            }
-            Command::CreateGameArt
-            | Command::ImportCover
-            | Command::Reset
-            | Command::ToggleTwoDimensional => !loading && self.current_game.is_some(),
             // AMD-044 REQ-LOOP-072: next to the hard reset, but it needs a running session.
             Command::SoftReset => self.can_soft_reset(),
+            Command::InsertCoin1 | Command::InsertCoin2 | Command::VsService => {
+                self.can_drive_vs_cabinet()
+            }
+            // Lot FDS: only with a disk drive.
+            Command::SwitchDiskSide | Command::InsertNextDisk | Command::EjectDisk => {
+                self.can_change_disk()
+            }
             // AMD-053 REQ-LOOP-076: offered only while the resume point stands.
             Command::ResumeLast => !loading && self.resume_available(),
-            // REQ-UI-210: the entry named, or the one being played.
-            Command::ToggleFavorite => {
-                let game = args
-                    .text
-                    .as_deref()
-                    .or_else(|| self.current_game_id())
-                    .unwrap_or_default();
-                self.games.exists(game)
-            }
             Command::SaveSlot => self.can_save(args.number),
             Command::LoadSlot => {
                 let slot = numbered_slot_id(args.number);
@@ -93,9 +84,11 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             Command::PlayMovie => {
                 !loading
                     && self.session.as_ref().is_some_and(GameSession::has_rom)
-                    && args.text.as_deref().is_some_and(|text| !text.is_empty())
+                    && has_text(args)
             }
-            Command::StopMovie | Command::AnnotateMovie => !loading && self.movie_mode().is_some(),
+            Command::StopMovie => !loading && self.movie_mode().is_some(),
+            // FCEUX-48: a note needs a movie of ours; an `.fm2` is never written over.
+            Command::AnnotateMovie => !loading && self.movie_takes_notes(),
             Command::OpenMovie | Command::ReloadScript => {
                 !loading && self.session.as_ref().is_some_and(GameSession::has_rom)
             }
@@ -106,6 +99,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             | Command::SetSpeed
             | Command::SetRegion
             | Command::ToggleAutoRegion
+            | Command::SetConsoleModel
             | Command::ResetView
             | Command::SetSkybox
             | Command::ToggleLocalCamera
@@ -122,7 +116,6 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             | Command::ShowKeyConfig
             | Command::ShowDataFolder
             | Command::ToggleEditorMode
-            | Command::FilterFavorites
             | Command::SearchLibrary
             | Command::ShowAbout => true,
         }
@@ -154,8 +147,6 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
                 self.movie_mode() == Some(zax_nes::movie::MovieMode::Recording)
             }
             Command::ToggleMenuMusic => self.settings.menu_music(),
-            // REQ-UI-210: « Favorites only », a tickable command of the enumeration.
-            Command::FilterFavorites => self.favorites_only,
             _ => false,
         }
     }
@@ -178,12 +169,10 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             | Command::ChooseProfile
             | Command::ImportProfile
             | Command::ImportThreeDSen
-            | Command::DeleteGame
-            | Command::CreateGameArt
-            | Command::ImportCover
+            | Command::ImportThreeDSenSteam
+            | Command::ImportThreeDSenBundle
+            | Command::ImportThreeDSenArchive
             | Command::ResumeLast
-            | Command::ToggleFavorite
-            | Command::FilterFavorites
             | Command::SearchLibrary
             | Command::Quit => self.execute_file(command, args),
             Command::SaveSlot
@@ -196,6 +185,12 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             | Command::Resume
             | Command::Reset
             | Command::SoftReset
+            | Command::InsertCoin1
+            | Command::InsertCoin2
+            | Command::VsService
+            | Command::SwitchDiskSide
+            | Command::InsertNextDisk
+            | Command::EjectDisk
             | Command::Stop
             | Command::FastForward
             | Command::Rollback
@@ -206,6 +201,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             | Command::SpeedDown
             | Command::SetRegion
             | Command::ToggleAutoRegion
+            | Command::SetConsoleModel
             | Command::SetPortType => self.execute_emulation(command, args),
             Command::ToggleTwoDimensional
             | Command::ResetView
@@ -254,35 +250,9 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         match command {
             Command::OpenRom => self.open_rom_or_ask_for_one(args),
             Command::LaunchGame => self.launch_game(args.text.as_deref().unwrap_or_default()),
-            Command::DeleteGame => {
-                let game = args
-                    .text
-                    .clone()
-                    .or_else(|| self.current_game_id().map(str::to_owned))
-                    .unwrap_or_default();
-                self.request_delete_game(&game);
-            }
-            Command::CreateGameArt => {
-                self.create_game_art();
-            }
-            Command::ImportCover => match args.text.as_deref().filter(|text| !text.is_empty()) {
-                Some(path) => {
-                    self.import_cover(path);
-                }
-                None => self.request_ui(command, args),
-            },
             Command::Quit => self.quit_requested = true,
             // AMD-053 REQ-LOOP-076: the only path that reads the resume point.
             Command::ResumeLast => self.resume_last_game(),
-            Command::ToggleFavorite => {
-                let game = args
-                    .text
-                    .clone()
-                    .or_else(|| self.current_game_id().map(str::to_owned))
-                    .unwrap_or_default();
-                self.toggle_favorite(&game);
-            }
-            Command::FilterFavorites => self.set_favorites_only(!self.favorites_only),
             Command::SearchLibrary => {
                 self.set_library_search(args.text.as_deref().unwrap_or_default());
             }
@@ -318,8 +288,14 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             Command::Resume => self.resume(),
             Command::Reset => self.reset_game(),
             Command::SoftReset => self.soft_reset_game(),
+            Command::InsertCoin1 => self.drive_vs_cabinet(Some(1)),
+            Command::InsertCoin2 => self.drive_vs_cabinet(Some(2)),
+            Command::VsService => self.drive_vs_cabinet(None),
+            Command::SwitchDiskSide => self.change_disk(DiskChange::SwitchSide),
+            Command::InsertNextDisk => self.change_disk(DiskChange::NextDisk),
+            Command::EjectDisk => self.change_disk(DiskChange::Eject),
             Command::Stop => self.stop_current_game(true, true),
-            Command::FastForward => self.request_fast_forward(),
+            Command::FastForward => self.request_fast_forward(args.number),
             Command::Rollback => self.perform_rollback(),
             Command::FrameBack => self.step_frame_back(),
             Command::FrameAdvance => self.step_frame(),
@@ -339,6 +315,12 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
                 let value = !model.auto_tv_mode();
                 model.set_auto_tv_mode(value);
             }),
+            // Lot FIDPLUS-1, G1: region and revision options in one go.
+            Command::SetConsoleModel => {
+                if let Some(console) = ConsoleModel::from_raw(args.number) {
+                    self.update_settings(|model| console.apply(model));
+                }
+            }
             Command::SetPortType => {
                 if let (Some(session), Ok(port)) =
                     (self.session.as_mut(), usize::try_from(args.number))
@@ -508,6 +490,45 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
 
     /// Whether the soft reset of AMD-044 REQ-LOOP-072 can run: it needs a running session, not
     /// just a current game — there is nothing to reset in a core that holds no ROM.
+    /// Lot MAPPERS-N: a VS. System is loaded and running.
+    pub(super) fn can_drive_vs_cabinet(&self) -> bool {
+        self.can_soft_reset()
+            && self
+                .session
+                .as_ref()
+                .is_some_and(crate::game_session::GameSession::is_vs_system)
+    }
+
+    /// A coin in slot `slot` (1 or 2), or the service button with `None`: the core holds the
+    /// line a few frames, as the coin mechanism does.
+    fn drive_vs_cabinet(&mut self, slot: Option<usize>) {
+        if !self.can_drive_vs_cabinet() {
+            return;
+        }
+        if let Some(session) = self.session.as_mut() {
+            session.drive_vs_cabinet(slot);
+        }
+    }
+
+    /// Lot FDS: whether the game running has a disk drive to change disks in.
+    pub(super) fn can_change_disk(&self) -> bool {
+        self.can_soft_reset()
+            && self
+                .session
+                .as_ref()
+                .is_some_and(|session| session.disk_sides() > 0)
+    }
+
+    /// A disk change in the Famicom Disk System's drive.
+    fn change_disk(&mut self, change: DiskChange) {
+        if !self.can_change_disk() {
+            return;
+        }
+        if let Some(session) = self.session.as_mut() {
+            session.change_disk(change);
+        }
+    }
+
     pub(super) fn can_soft_reset(&self) -> bool {
         !self.loading
             && self.state != EmulationState::Stopped
@@ -517,15 +538,22 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
                 .is_some_and(crate::game_session::GameSession::has_rom)
     }
 
-    fn request_fast_forward(&mut self) {
+    /// A fast-forward request after `presses` presses in a row (0 or 1 for one, Rust-only).
+    fn request_fast_forward(&mut self, presses: i32) {
         if self.state != EmulationState::Running {
             return;
         }
-        self.fast_forward.request();
+        self.fast_forward
+            .request_at(speed_setting::fast_forward_tier_factor(presses));
         self.apply_speed();
-        // REQ-LOOP-016: the notification is refreshed for as long as the key is held.
+        // REQ-LOOP-016: the notification is refreshed for as long as the key is held; it says
+        // the speed (owner request).
+        let text = format!(
+            "Fast Forward {}",
+            speed_setting::factor_text(self.pacer.speed)
+        );
         self.notifications
-            .show("Fast Forward", SHORT_SECONDS, NotificationSeverity::Normal);
+            .show(&text, SHORT_SECONDS, NotificationSeverity::Normal);
     }
 
     /// Rebuilds the meshes with another algorithm; the state and the core do not change
@@ -549,4 +577,11 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             self.resume();
         }
     }
+}
+
+/// Whether a command carries a non-empty text argument — the check two arms of
+/// [`EmulationHost::can_execute`] make, lifted out so that the match stays inside clippy's line
+/// budget.
+fn has_text(args: &CommandArgs) -> bool {
+    args.text.as_deref().is_some_and(|text| !text.is_empty())
 }

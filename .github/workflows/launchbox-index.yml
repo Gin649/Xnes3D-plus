@@ -1,0 +1,41 @@
+name: LaunchBox index
+
+# Xnes3D+: once a week, rebuilds community/launchbox-nes.json, the box art and game
+# information index of the NES and Famicom games that the app downloads, from the LaunchBox
+# Games Database. Commits it only when it changed.
+on:
+  schedule:
+    - cron: '41 7 * * 3' # Wednesdays
+  workflow_dispatch:
+  # Also when the script or this file changes, so a change is tried at once.
+  push:
+    paths:
+      - '.github/scripts/launchbox_index.py'
+      - '.github/workflows/launchbox-index.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the LaunchBox Games Database
+        run: curl -fsSL -o "$RUNNER_TEMP/Metadata.zip" https://gamesdb.launchbox-app.com/Metadata.zip
+
+      - name: Keep the NES and Famicom games
+        run: python3 .github/scripts/launchbox_index.py "$RUNNER_TEMP/Metadata.zip" community/launchbox-nes.json
+
+      - name: Commit it when it changed
+        run: |
+          if git diff --quiet -- community/launchbox-nes.json && git ls-files --error-unmatch community/launchbox-nes.json > /dev/null 2>&1; then
+            echo "The index did not change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add community/launchbox-nes.json
+          git commit -m "LaunchBox index of the NES and Famicom games"
+          git push

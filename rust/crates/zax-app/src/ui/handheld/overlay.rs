@@ -3,6 +3,7 @@
 
 use super::pad::PadButton;
 use super::states::StatesMode;
+use crate::emulation::speed_setting::BOOSTS;
 use crate::persistence::save_slots::CONSOLE_SLOT_COUNT;
 
 /// A row of the menu.
@@ -14,8 +15,8 @@ pub enum OverlayItem {
     SaveState,
     /// Load the state of the chosen slot.
     LoadState,
-    /// Fast forward on or off.
-    FastForward,
+    /// The game speed, x1 to x10 (owner request): left and right change it at once.
+    Speed,
     /// The camera preset.
     Camera,
     /// The options.
@@ -29,22 +30,45 @@ pub enum OverlayItem {
     Achievements,
     /// Stop the game and show the ROM list.
     QuitToList,
-    /// Leave the application.
+    /// Web build: the page's ROM dialogue (owner request).
+    WebOpenRom,
+    /// Web build: the page's dialogue that imports 3D profiles and 3dSen data.
+    WebImportProfile,
+    /// Web build: the page's view of what the browser keeps.
+    WebManageCache,
+    /// Leave the application (not in the web build: a page has no launcher to go back to).
     ExitToLauncher,
+    /// Xnes3D+: the page of the rows used less often (the camera, the widescreen, the hacks,
+    /// the achievements, leaving the app). B comes back from it.
+    More,
 }
 
-/// The rows, in order.
-pub const ITEMS: [OverlayItem; 11] = [
+/// Xnes3D+: the rows of the menu's first page, the ones used most, in order.
+pub const MAIN_ITEMS: [OverlayItem; 7] = [
     OverlayItem::Resume,
     OverlayItem::SaveState,
     OverlayItem::LoadState,
-    OverlayItem::FastForward,
+    OverlayItem::Speed,
+    OverlayItem::Options,
+    OverlayItem::More,
+    OverlayItem::QuitToList,
+];
+
+/// The rows, in order.
+pub const ITEMS: [OverlayItem; 14] = [
+    OverlayItem::Resume,
+    OverlayItem::SaveState,
+    OverlayItem::LoadState,
+    OverlayItem::Speed,
     OverlayItem::Camera,
     OverlayItem::Options,
     OverlayItem::Widescreen,
     OverlayItem::Hacks,
     OverlayItem::Achievements,
     OverlayItem::QuitToList,
+    OverlayItem::WebOpenRom,
+    OverlayItem::WebImportProfile,
+    OverlayItem::WebManageCache,
     OverlayItem::ExitToLauncher,
 ];
 
@@ -84,8 +108,8 @@ pub enum OverlayCommand {
     Resume,
     /// Open the save state screen, to save or to load, on this numbered slot.
     ChooseState(StatesMode, i32),
-    /// Fast forward on or off.
-    ToggleFastForward,
+    /// Run the game this many tenths of its speed (10 to 100).
+    SetSpeed(i32),
     /// Apply this camera preset.
     SetCamera(CameraPreset),
     /// Show the options.
@@ -99,6 +123,8 @@ pub enum OverlayCommand {
     Achievements,
     /// Stop the game, back to the ROM list.
     QuitToList,
+    /// Web build: show this dialogue of the page, the menu staying open behind it.
+    WebDialog(crate::web_bridge::WebDialog),
     /// Leave the application.
     ExitToLauncher,
 }
@@ -109,8 +135,14 @@ pub struct OverlayModel {
     selected: usize,
     slot: i32,
     camera: CameraPreset,
+    /// The game speed in tenths, one of [`BOOSTS`].
+    speed: i32,
     /// Whether the achievements' row shows (RetroAchievements on).
     achievements: bool,
+    /// Whether the menu is the web build's: its page's rows, no exit to a launcher.
+    web: bool,
+    /// Xnes3D+: whether the More page is shown.
+    more: bool,
 }
 
 impl Default for OverlayModel {
@@ -127,8 +159,16 @@ impl OverlayModel {
             selected: 0,
             slot: 1,
             camera: CameraPreset::Orbit,
+            speed: 10,
             achievements: false,
+            web: crate::web_bridge::active(),
+            more: false,
         }
+    }
+
+    /// Makes the menu the web build's or not (tests; the build decides otherwise).
+    pub const fn set_web(&mut self, web: bool) {
+        self.web = web;
     }
 
     /// Shows the achievements' row or not (RetroAchievements on or off).
@@ -139,9 +179,21 @@ impl OverlayModel {
     /// The rows shown, in order.
     #[must_use]
     pub fn items(&self) -> Vec<OverlayItem> {
+        // Xnes3D+: the first page holds the rows used most; the others are under More.
+        if !self.more {
+            return MAIN_ITEMS.to_vec();
+        }
         ITEMS
             .into_iter()
+            .filter(|item| !MAIN_ITEMS.contains(item))
             .filter(|item| self.achievements || *item != OverlayItem::Achievements)
+            .filter(|item| match item {
+                OverlayItem::WebOpenRom
+                | OverlayItem::WebImportProfile
+                | OverlayItem::WebManageCache => self.web,
+                OverlayItem::ExitToLauncher => !self.web,
+                _ => true,
+            })
             .collect()
     }
 
@@ -170,6 +222,17 @@ impl OverlayModel {
         self.camera
     }
 
+    /// The game speed shown on its row, in tenths.
+    #[must_use]
+    pub const fn speed(&self) -> i32 {
+        self.speed
+    }
+
+    /// Shows `tenths` on the speed row (the speed the game runs at).
+    pub const fn set_speed(&mut self, tenths: i32) {
+        self.speed = tenths;
+    }
+
     /// Makes `slot` the numbered slot the state rows show (the last one used).
     pub const fn set_slot(&mut self, slot: i32) {
         self.slot = slot;
@@ -178,6 +241,13 @@ impl OverlayModel {
     /// Opens the menu again on its first row; the slot and the camera stay.
     pub const fn reopen(&mut self) {
         self.selected = 0;
+        self.more = false;
+    }
+
+    /// Xnes3D+: whether the More page is shown.
+    #[must_use]
+    pub const fn in_more(&self) -> bool {
+        self.more
     }
 
     /// One press of a button.
@@ -190,6 +260,18 @@ impl OverlayModel {
             PadButton::Down => self.selected = (self.selected + 1) % self.items().len(),
             PadButton::Left => return self.step(-1),
             PadButton::Right => return self.step(1),
+            // Xnes3D+: A on More opens its page, B comes back from it.
+            PadButton::A if self.selected() == OverlayItem::More => {
+                self.more = true;
+                self.selected = 0;
+            }
+            PadButton::B if self.more => {
+                self.more = false;
+                self.selected = MAIN_ITEMS
+                    .iter()
+                    .position(|item| *item == OverlayItem::More)
+                    .unwrap_or(0);
+            }
             PadButton::A => return Some(self.activate()),
             PadButton::B | PadButton::Menu => return Some(OverlayCommand::Resume),
             _ => {}
@@ -207,6 +289,17 @@ impl OverlayModel {
                 None
             }
             OverlayItem::Camera => Some(OverlayCommand::SetCamera(self.step_camera(step))),
+            OverlayItem::Speed => {
+                let here = BOOSTS
+                    .iter()
+                    .position(|tenths| *tenths >= self.speed)
+                    .unwrap_or(0);
+                let next = here
+                    .saturating_add_signed(isize::try_from(step).unwrap_or(0))
+                    .min(BOOSTS.len() - 1);
+                self.speed = BOOSTS[next];
+                Some(OverlayCommand::SetSpeed(self.speed))
+            }
             _ => None,
         }
     }
@@ -222,14 +315,24 @@ impl OverlayModel {
             OverlayItem::Resume => OverlayCommand::Resume,
             OverlayItem::SaveState => OverlayCommand::ChooseState(StatesMode::Save, self.slot),
             OverlayItem::LoadState => OverlayCommand::ChooseState(StatesMode::Load, self.slot),
-            OverlayItem::FastForward => OverlayCommand::ToggleFastForward,
+            // A goes back to the normal speed.
+            OverlayItem::Speed => OverlayCommand::SetSpeed(10),
             OverlayItem::Camera => OverlayCommand::SetCamera(self.camera),
             OverlayItem::Options => OverlayCommand::Options,
             OverlayItem::Widescreen => OverlayCommand::Widescreen,
             OverlayItem::Hacks => OverlayCommand::Hacks,
             OverlayItem::Achievements => OverlayCommand::Achievements,
             OverlayItem::QuitToList => OverlayCommand::QuitToList,
+            OverlayItem::WebOpenRom => OverlayCommand::WebDialog(crate::web_bridge::WebDialog::Rom),
+            OverlayItem::WebImportProfile => {
+                OverlayCommand::WebDialog(crate::web_bridge::WebDialog::Profile)
+            }
+            OverlayItem::WebManageCache => {
+                OverlayCommand::WebDialog(crate::web_bridge::WebDialog::Storage)
+            }
             OverlayItem::ExitToLauncher => OverlayCommand::ExitToLauncher,
+            // Opened in `handle`; never reached.
+            OverlayItem::More => OverlayCommand::Resume,
         }
     }
 }
@@ -238,17 +341,49 @@ impl OverlayModel {
 mod tests {
     use super::*;
 
+    /// Selects `item`, on the page it is on (Xnes3D+: the first page or More).
     fn go_to(model: &mut OverlayModel, item: OverlayItem) {
-        while model.selected() != item {
+        let on_main = MAIN_ITEMS.contains(&item);
+        if on_main && model.in_more() {
+            model.handle(PadButton::B);
+        } else if !on_main && !model.in_more() {
+            go_to(model, OverlayItem::More);
+            model.handle(PadButton::A);
+        }
+        for _ in 0..ITEMS.len() + MAIN_ITEMS.len() {
+            if model.selected() == item {
+                return;
+            }
             model.handle(PadButton::Down);
         }
+        panic!("{item:?} is not shown");
+    }
+
+    #[test]
+    fn the_web_menu_has_the_page_s_rows_and_no_exit() {
+        let mut model = OverlayModel::new();
+        model.set_web(true);
+        go_to(&mut model, OverlayItem::More);
+        model.handle(PadButton::A);
+        let items = model.items();
+        assert!(!items.contains(&OverlayItem::ExitToLauncher));
+        assert_eq!(Some(&OverlayItem::WebManageCache), items.last());
+        go_to(&mut model, OverlayItem::WebImportProfile);
+        assert_eq!(
+            Some(OverlayCommand::WebDialog(
+                crate::web_bridge::WebDialog::Profile
+            )),
+            model.handle(PadButton::A)
+        );
+        model.set_web(false);
+        assert!(!model.items().contains(&OverlayItem::WebOpenRom));
     }
 
     #[test]
     fn the_selection_wraps_and_back_resumes() {
         let mut model = OverlayModel::new();
         assert_eq!(None, model.handle(PadButton::Up));
-        assert_eq!(OverlayItem::ExitToLauncher, model.selected());
+        assert_eq!(OverlayItem::QuitToList, model.selected());
         assert_eq!(None, model.handle(PadButton::Down));
         assert_eq!(OverlayItem::Resume, model.selected());
         assert_eq!(Some(OverlayCommand::Resume), model.handle(PadButton::B));
@@ -280,7 +415,7 @@ mod tests {
     fn every_row_answers_its_command() {
         let mut model = OverlayModel::new();
         for (item, command) in [
-            (OverlayItem::FastForward, OverlayCommand::ToggleFastForward),
+            (OverlayItem::Speed, OverlayCommand::SetSpeed(10)),
             (OverlayItem::Options, OverlayCommand::Options),
             (OverlayItem::QuitToList, OverlayCommand::QuitToList),
             (OverlayItem::ExitToLauncher, OverlayCommand::ExitToLauncher),
@@ -288,6 +423,29 @@ mod tests {
             go_to(&mut model, item);
             assert_eq!(Some(command), model.handle(PadButton::A));
         }
+    }
+
+    #[test]
+    fn the_speed_row_steps_from_one_to_ten_without_wrapping() {
+        let mut model = OverlayModel::new();
+        go_to(&mut model, OverlayItem::Speed);
+        assert_eq!(
+            Some(OverlayCommand::SetSpeed(10)),
+            model.handle(PadButton::Left)
+        );
+        assert_eq!(10, model.speed());
+        assert_eq!(
+            Some(OverlayCommand::SetSpeed(15)),
+            model.handle(PadButton::Right)
+        );
+        for _ in 0..20 {
+            model.handle(PadButton::Right);
+        }
+        assert_eq!(100, model.speed());
+        assert_eq!(
+            Some(OverlayCommand::SetSpeed(10)),
+            model.handle(PadButton::A)
+        );
     }
 
     #[test]

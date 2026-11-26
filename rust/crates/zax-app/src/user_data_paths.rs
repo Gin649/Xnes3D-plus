@@ -34,6 +34,11 @@ pub enum UserDataRootKind {
     Explicit,
 }
 
+/// The extension of a battery RAM file.
+pub const BATTERY_EXTENSION: &str = "srm";
+/// The extension of a flash save file (lot MAPPERS-P).
+pub const FLASH_EXTENSION: &str = "flash";
+
 /// The folders and files of the user data.
 #[derive(Debug, Clone)]
 pub struct UserDataPaths {
@@ -146,13 +151,39 @@ impl UserDataPaths {
     /// request), or, as the files were named before, the ROM's fingerprint.
     #[must_use]
     pub fn battery_file(&self, name: &str) -> PathBuf {
-        self.battery_directory.join(format!("{name}.srm"))
+        self.save_file(name, BATTERY_EXTENSION)
+    }
+
+    /// The flash save of the ROM `name` (lot MAPPERS-P): `<name>.flash` beside its RAM file,
+    /// the changed sectors of a board whose save medium is its flash chip.
+    #[must_use]
+    pub fn flash_file(&self, name: &str) -> PathBuf {
+        self.save_file(name, FLASH_EXTENSION)
+    }
+
+    /// `<name>.<extension>` in the cartridge saves' folder.
+    #[must_use]
+    pub fn save_file(&self, name: &str, extension: &str) -> PathBuf {
+        self.battery_directory.join(format!("{name}.{extension}"))
     }
 
     /// Movie `number` of the ROM `rom`: `<rom>.mv<number>` (owner request).
     #[must_use]
     pub fn movie_file(&self, rom: &str, number: u32) -> PathBuf {
         self.movies_directory.join(format!("{rom}.mv{number}"))
+    }
+
+    /// Xnes3D+: what Smart 3D learned about the ROM whose `games.json` key is `rom`:
+    /// `smart3d/<hash of the key>.txt`. The key is a path, so it is hashed into a file name
+    /// (FNV-1a, written out so it never changes).
+    #[must_use]
+    pub fn smart3d_file(&self, rom: &str) -> PathBuf {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in rom.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.root.join("smart3d").join(format!("{hash:016x}.txt"))
     }
 
     /// The resolved-tile cache of the profile `id`: `tiles/<id>.tiles` (AMD-062 REQ-PROF-082).
@@ -237,7 +268,6 @@ impl UserDataPaths {
             &self.saves_directory,
             &self.battery_directory,
             &self.profiles_directory,
-            &self.covers_directory,
             &self.logs_directory,
         ] {
             fs::create_dir_all(folder)?;

@@ -29,12 +29,14 @@ pub enum GameRow {
     Widescreen,
     /// The hacks of the game: its own screen.
     Hacks,
+    /// Xnes3D+: makes Smart 3D forget what it learned about the game.
+    ResetSmart3d,
 }
 
 /// The rows of the main screen of a game's options, in the order of the owner's mockup (RO-3).
 /// The widescreen moved from next to last to between the overscan and the region; the hacks stay
 /// last.
-pub const GAME_MAIN: [GameRow; 11] = [
+pub const GAME_MAIN: [GameRow; 12] = [
     GameRow::ResetAll,
     GameRow::Option(OptionRow::Volume),
     GameRow::Option(OptionRow::RenderScale),
@@ -46,6 +48,7 @@ pub const GAME_MAIN: [GameRow; 11] = [
     GameRow::Option(OptionRow::Page(OptionsPage::Optimizations)),
     GameRow::Option(OptionRow::Page(OptionsPage::Advanced)),
     GameRow::Hacks,
+    GameRow::ResetSmart3d,
 ];
 
 /// *Optimisations* of a game: the eight performance rows of the global page. The smooth Lua
@@ -118,6 +121,8 @@ pub const GAME_LIGHT_ROWS: [OptionRow; 1] = [OptionRow::Setting(SettingId::Rende
 /// the game's run-ahead frames, so it belongs where the run-ahead is and not on a page of its
 /// own. The branch had written both into a flat `GAME_ROWS` that RO-3 has since replaced; the
 /// run-ahead was already here.
+///
+/// Xnes3D+: no engine row; every game plays on the Zaxnes engine.
 pub const GAME_EMULATION_ROWS: [OptionRow; 2] = [
     OptionRow::Setting(SettingId::EmuRunAhead),
     OptionRow::Setting(SettingId::EmuSmoothScrollAhead),
@@ -142,7 +147,16 @@ pub const fn page_rows(page: OptionsPage) -> &'static [OptionRow] {
         | OptionsPage::Camera
         | OptionsPage::Audio
         | OptionsPage::Shaders
-        | OptionsPage::Library => &[],
+        | OptionsPage::Library
+        | OptionsPage::Touch
+        | OptionsPage::PresetOptions
+        | OptionsPage::Widescreen
+        | OptionsPage::SimpleDisplay
+        | OptionsPage::SimpleNesPicture
+        | OptionsPage::SimpleRendering3d
+        | OptionsPage::SimpleAudio
+        | OptionsPage::SimpleEmulation
+        | OptionsPage::AllSettings => &[],
     }
 }
 
@@ -150,7 +164,7 @@ pub const fn page_rows(page: OptionsPage) -> &'static [OptionRow] {
 pub fn main_option_rows() -> impl Iterator<Item = OptionRow> {
     GAME_MAIN.into_iter().filter_map(|row| match row {
         GameRow::Option(row) => Some(row),
-        GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks => None,
+        GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks | GameRow::ResetSmart3d => None,
     })
 }
 
@@ -196,16 +210,27 @@ pub const fn row_settings(row: OptionRow) -> &'static [SettingId] {
         // advanced page go through the same variant — names nothing here, so it can never
         // become an option of a game.
         OptionRow::Setting(id) => one_setting(id),
+        // The touch screen's settings belong to the device, not to a game.
         OptionRow::Language
+        | OptionRow::Choice(_)
         | OptionRow::Camera
         | OptionRow::Controls
         | OptionRow::Achievements
         | OptionRow::Page(_)
         | OptionRow::Shader(_)
         | OptionRow::ShaderPreFilter(_)
+        | OptionRow::ShaderOption(..)
         | OptionRow::ShaderBackend
         | OptionRow::Android(_)
-        | OptionRow::Group(_) => &[],
+        | OptionRow::Group(_)
+        // Lot REWRITE-UI: the global options' own rows.
+        | OptionRow::Mode
+        | OptionRow::Preset
+        | OptionRow::WidescreenOn
+        | OptionRow::Signal
+        | OptionRow::Switch(_)
+        | OptionRow::HackDefault(_)
+        | OptionRow::Reset => &[],
     }
 }
 
@@ -214,6 +239,7 @@ pub const fn row_settings(row: OptionRow) -> &'static [SettingId] {
 const fn one_setting(id: SettingId) -> &'static [SettingId] {
     match id {
         SettingId::EmuRunAhead => &[SettingId::EmuRunAhead],
+        SettingId::EmuEngine => &[SettingId::EmuEngine],
         // KIRBY-MERGE: the smooth scrolling spends a frame of the game's own run-ahead, so it is
         // an option of the game beside it (owner request: a game whose own lag is two frames
         // takes run-ahead 2, smooth with the latency of 1).
@@ -258,6 +284,8 @@ pub enum GameOptionsCommand {
     Widescreen,
     /// Open the game's overscan (Rust-only).
     OpenOverscan,
+    /// Xnes3D+: make Smart 3D forget what it learned about the game.
+    ResetSmart3d,
 }
 
 /// The options of one game and the selection; row 0 is "reset everything".
@@ -327,8 +355,11 @@ impl GameOptionsModel {
     /// The row of the widescreen of the game.
     pub const WIDESCREEN_ROW: usize = 6;
 
-    /// The row that opens the hacks of the game, the last one.
+    /// The row that opens the hacks of the game.
     pub const HACKS_ROW: usize = 10;
+
+    /// Xnes3D+: the row that makes Smart 3D forget the game, the last one.
+    pub const SMART3D_ROW: usize = 11;
 
     /// The index of the selected row: on the main screen 0 is "reset everything", on a page 0 is
     /// its first row.
@@ -575,6 +606,10 @@ impl GameOptionsModel {
             {
                 return Some(GameOptionsCommand::OpenOverscan);
             }
+            // Zaxnes's own controls do not step, and the widescreen and the hacks do not open,
+            // while this game runs on another engine.
+            PadButton::Left | PadButton::Right | PadButton::A
+                if self.selected_locked_by_engine() => {}
             PadButton::A | PadButton::Right
                 if !self.in_advanced() && self.selected == Self::HACKS_ROW =>
             {
@@ -587,6 +622,11 @@ impl GameOptionsModel {
                 return Some(GameOptionsCommand::OpenWidescreen);
             }
             PadButton::A if !self.in_advanced() && self.selected == 0 => return self.reset(),
+            PadButton::A if !self.in_advanced() && self.selected == Self::SMART3D_ROW => {
+                return Some(GameOptionsCommand::ResetSmart3d);
+            }
+            PadButton::Left | PadButton::Right
+                if !self.in_advanced() && self.selected == Self::SMART3D_ROW => {}
             PadButton::Left => return self.step(-1),
             PadButton::Right | PadButton::A => return self.step(1),
             _ => {}
@@ -602,9 +642,28 @@ impl GameOptionsModel {
             Some(rows) => rows.get(self.selected).copied(),
             None => match GAME_MAIN.get(self.selected)? {
                 GameRow::Option(row) => Some(*row),
-                GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks => None,
+                GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks | GameRow::ResetSmart3d => None,
             },
         }
+    }
+
+    /// Whether the selected row is a control only Zaxnes's own engine has while this game's
+    /// engine is another one: the widescreen and the hacks of the main screen, or an option row
+    /// [`options::engine_lock`] locks.
+    #[must_use]
+    pub fn selected_locked_by_engine(&self) -> bool {
+        if self.page_rows().is_none() {
+            let capability = match GAME_MAIN.get(self.selected) {
+                Some(GameRow::Widescreen) => Some(zax_core_api::Capability::Widescreen),
+                Some(GameRow::Hacks) => Some(zax_core_api::Capability::HackPacks),
+                _ => None,
+            };
+            if let Some(capability) = capability {
+                return !crate::ui::options::engine_has(&self.edited, capability);
+            }
+        }
+        self.selected_row()
+            .is_some_and(|row| options::engine_lock(row, &self.edited).is_some())
     }
 
     /// The global values with the game's own over them.
@@ -873,9 +932,9 @@ mod tests {
         assert!(!is_game_row_setting(SettingId::LightIntensity));
     }
 
-    /// Each of the thirty-one rows a game can have stores a value of its own, "Use Global" takes
+    /// Each of the thirty-two rows a game can have stores a value of its own, "Use Global" takes
     /// it back, and "Put everything back to global" clears the lot. Thirty until KIRBY-MERGE
-    /// added the smooth scrolling from the run-ahead.
+    /// added the smooth scrolling from the run-ahead; thirty-one stepped since the engine row.
     #[test]
     fn ro_3_every_row_stores_its_own_value_and_goes_back_to_global() {
         let steppable: Vec<OptionRow> = all_game_rows()
@@ -883,7 +942,7 @@ mod tests {
             // own test above.
             .filter(|row| *row != OptionRow::Overscan)
             .collect();
-        assert_eq!(30, steppable.len(), "{steppable:?}");
+        assert_eq!(31, steppable.len(), "{steppable:?}");
         let mut model = model(GameOptions::new());
         for row in &steppable {
             let row = *row;
@@ -1028,10 +1087,11 @@ mod tests {
                 GameRow::Option(OptionRow::Page(OptionsPage::Optimizations)),
                 GameRow::Option(OptionRow::Page(OptionsPage::Advanced)),
                 GameRow::Hacks,
+                GameRow::ResetSmart3d,
             ],
             GAME_MAIN
         );
-        assert_eq!(11, GameOptionsModel::ROW_COUNT);
+        assert_eq!(12, GameOptionsModel::ROW_COUNT);
         assert_eq!(
             GameRow::Option(OptionRow::Page(OptionsPage::Advanced)),
             GAME_MAIN[GameOptionsModel::ADVANCED_ROW]
@@ -1041,6 +1101,7 @@ mod tests {
             GAME_MAIN[GameOptionsModel::WIDESCREEN_ROW]
         );
         assert_eq!(GameRow::Hacks, GAME_MAIN[GameOptionsModel::HACKS_ROW]);
+        assert_eq!(GameRow::ResetSmart3d, GAME_MAIN[GameOptionsModel::SMART3D_ROW]);
     }
 
     /// RO-3 §2 rule 2: a row that opens a page counts the game's own values under it, the pages

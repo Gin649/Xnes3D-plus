@@ -20,6 +20,7 @@ cubemap, ni modèle, ni son, ni police (REQ-PUB-002).
 | Nuanciers, shaders GLSL, géométrie des tuiles | **Écrits pour ce projet** | GPL-3.0 (ce projet) |
 | Palette NES | Donnée technique publique (documentation NES), reprise dans la spécification | donnée de fait, non protégeable |
 | Clé d'encodage des plans de tuiles (`.3dn`) | Donnée d'interopérabilité, constante numérique — `rust/crates/zax-profiles/src/wire/cipher.rs` (REQ-PUB-007) | donnée d'interopérabilité |
+| Police Roboto de la version web (`rust/web/fonts/Roboto-Regular.ttf`, `Roboto-Bold.ttf`) | **Google**, Roboto 2.138 (googlefonts/roboto-2), livrée **seulement avec la version web** : une page n'a pas accès aux polices du système, la page la place là où Android garde la sienne. Texte de la licence : `rust/web/fonts/LICENSE-Roboto.txt` | Apache-2.0 |
 
 Aucun fichier `.bytes`, `.3dn`, `.png`, `.jpg`, `.obj`, `.wav`, `.ogg`, `.mp3`, `.ttf`, `.otf`
 ou `.ico` n'est présent, ni dans le dépôt, ni dans la version publiée, **à une exception
@@ -69,6 +70,14 @@ Les deux fichiers sont **inclus dans l'exécutable** (`rust/crates/zax-app/src/d
 n'ajoutent aucun fichier à la version publiée : au premier lancement d'une version, la ROM est
 écrite dans le dossier des ROM et le profil dans les profils de l'utilisateur, et la
 bibliothèque les relie. Supprimés, ils ne reviennent qu'avec une version qui les change.
+
+## 1 quater. Les profils 3D faits pour Zaxnes
+
+`rust/profiles/` contient des profils 3D écrits pour ce projet (aucun fichier de 3dSen),
+*Faxanadu* et *Metal Force* pour l'instant, sous la licence du projet (GPL-3.0). Comme celui de
+FlappyZaxNes, ils sont **inclus dans l'exécutable** (`rust/crates/zax-app/src/bundled_profiles.rs`,
+et le core libretro) et écrits dans les profils de l'utilisateur au premier lancement d'une
+version.
 
 ## 2. Ce que Zaxnes lit sur votre machine, sans le redistribuer
 

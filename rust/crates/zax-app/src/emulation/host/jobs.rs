@@ -4,10 +4,10 @@
 
 use std::path::Path;
 
+use zax_core_api::{EngineKind, NesRegion};
 use zax_engine3d::settings::RenderAlgorithm;
 use zax_engine3d::state_codec;
-use zax_nes::{NesCore, NesRegion};
-use zax_profiles::enums::TvRegionMode;
+use zax_nes::{builtin_patches, NesCore};
 use zax_settings::catalogue::SettingId;
 use zax_settings::values::SettingValue;
 
@@ -15,6 +15,8 @@ use super::games::{ConfirmationRequest, ConfirmedAction, NO_LABEL};
 use super::{EmulationHost, GameView};
 use crate::emulation::commands::{Command, CommandArgs};
 use crate::emulation::emulation_state::EmulationState;
+use crate::emulation::engine_handle::EngineHandle;
+use crate::emulation::fceux_validated;
 use crate::emulation::game_catalog::{GameCatalog, ResolvedGame};
 use crate::emulation::rom_file::{self, RomData, INVALID_ROM_MESSAGE};
 use crate::game_session::{GameSession, SessionRequest};
@@ -103,6 +105,52 @@ enum Step {
     Failed(String),
 }
 
+/// The console's power-on memories and PPU revision, read from the settings at load.
+struct ConsoleHardware {
+    power_on_ram: zax_nes::PowerOnRam,
+    power_on_ppu_ram: zax_nes::PowerOnPpuRam,
+    pre_g_revision: bool,
+    oamaddr_write_corruption: bool,
+    mmc3_revision: zax_nes::Mmc3Revision,
+    letterless_cpu: bool,
+}
+
+impl ConsoleHardware {
+    fn apply(self, core: &mut EngineHandle) {
+        core.set_power_on_ram(self.power_on_ram);
+        core.set_power_on_ppu_ram(self.power_on_ppu_ram);
+        core.set_ppu_pre_g_revision(self.pre_g_revision);
+        core.set_oamaddr_write_corruption(self.oamaddr_write_corruption);
+        core.set_mmc3_revision(self.mmc3_revision);
+        core.set_letterless_cpu(self.letterless_cpu);
+    }
+}
+
+/// Hands the switches of `EmulationHost::fidelity_switches` to the core, in their order.
+/// A seed for what a console draws at power-on (random RAM, random alignment): the clock.
+fn power_on_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(1, |elapsed| {
+            u64::try_from(elapsed.as_nanos() & u128::from(u64::MAX)).unwrap_or(1)
+        })
+}
+
+fn apply_fidelity_switches(core: &mut EngineHandle, switches: [bool; 10]) {
+    let [oam_corruption, bus_conflicts, oamaddr_bug, oam_decay, power_on_top, delay_2006, glitch_2006, glitch_2000, palette_corruption, ppu_reset_line] =
+        switches;
+    core.set_palette_corruption(palette_corruption);
+    core.set_ppu_reset_line(ppu_reset_line);
+    core.set_address_load_delay(delay_2006);
+    core.set_glitch_2006(glitch_2006);
+    core.set_glitch_2000(glitch_2000);
+    core.set_oam_corruption(oam_corruption);
+    core.set_bus_conflicts(bus_conflicts);
+    core.set_oamaddr_bug(oamaddr_bug);
+    core.set_oam_decay(oam_decay);
+    core.set_power_on_top(power_on_top);
+}
+
 impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
     /// Launches `game_id`: checks the ROM, then starts the job (REQ-LOOP-018 to REQ-LOOP-023).
     pub(super) fn launch_game(&mut self, game_id: &str) {
@@ -120,13 +168,32 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             self.notifications.show_error(INVALID_ROM_MESSAGE);
             return;
         };
-        let rom = match rom_file::read(Path::new(&rom_path)) {
-            Ok(rom) => rom,
-            Err(message) => {
-                self.notifications.show_error(&message);
-                return;
-            }
+        let content = match self.take_packed_content(&rom_path) {
+            Some(content) => content,
+            None => match rom_file::read_content(Path::new(&rom_path)) {
+                Ok(content) => content,
+                Err(message) => {
+                    self.notifications.show_error(&message);
+                    return;
+                }
+            },
         };
+        // A hack pack in the game's archive takes the catalogue's place for it; any other game
+        // goes back to the catalogue's packs.
+        match &content.pack {
+            Some(pack) => {
+                match builtin_patches::set_packed_pack(&pack.name, &pack.bytes, &content.rom.image)
+                {
+                    Ok(patch) => self.log(&format!("{}: the archive's pack {}", patch, pack.name)),
+                    Err(message) => {
+                        self.notifications.show_error(&message);
+                        self.log(&message);
+                    }
+                }
+            }
+            None => builtin_patches::clear_packed_pack(),
+        }
+        let rom = content.rom;
         // REQ-LOOP-018: the content is checked by a throw-away core, so a bad file never
         // disturbs the game in progress.
         let mut probe = NesCore::new();
@@ -159,6 +226,26 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         if self.loading || rom_path.is_empty() {
             return;
         }
+        // An archive is read now, once: a profile in it wins over the one chosen for the ROM
+        // (owner request), and the launch takes what was read.
+        if rom_file::is_archive(Path::new(rom_path)) {
+            let content = match rom_file::read_content(Path::new(rom_path)) {
+                Ok(content) => content,
+                Err(message) => {
+                    self.notifications.show_error(&message);
+                    return;
+                }
+            };
+            let packed = content.profile.as_ref().and_then(|profile| {
+                self.games
+                    .import_packed_profile(&profile.name, &profile.bytes)
+            });
+            self.packed_content = Some((full_path(rom_path), content));
+            if let Some(game_id) = packed {
+                self.launch_rom_with_profile(rom_path, &game_id);
+                return;
+            }
+        }
         // A profile that has since been removed falls back to the chooser rather than to an
         // error, which is also what REQ-UI-201 describes for a file never started.
         // A launcher's game whose remembered choice is "3D by default" (Smart 3D, given when it
@@ -182,6 +269,15 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         match target {
             Some(game_id) => self.launch_rom_with_profile(rom_path, &game_id),
             None => self.request_ui(Command::ChooseProfile, &CommandArgs::of_text(rom_path)),
+        }
+    }
+
+    /// What the archive at `rom_path` held when it was opened, if it was the last one opened.
+    fn take_packed_content(&mut self, rom_path: &str) -> Option<rom_file::GameContent> {
+        let wanted = full_path(rom_path);
+        match self.packed_content.take() {
+            Some((path, content)) if path == wanted => Some(content),
+            _ => None,
         }
     }
 
@@ -425,6 +521,10 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         let game = &self.prepare_hash_tiles(game, rom_image);
         // Xnes3D+: a game with no profile ("3D by default") plays in Smart 3D.
         zax_engine3d::smart3d::set_enabled(game.is_default_three_dimensional);
+        // Read before the mutable borrow of `self.scene` below.
+        // Lot FCEUX-48 step 4: a `.fm2` playback forces the engine that can replay it for this
+        // session, over the game's own choice, which is left stored as it was.
+        let engine = self.movie_engine.unwrap_or_else(|| self.chosen_engine());
         let request = SessionRequest {
             profile: &game.profile,
             title: &game.title,
@@ -436,11 +536,15 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             two_dimensional_mode: game.is_default_three_dimensional.then_some(false),
             console_interface: self.console_interface,
             tiles: game.tiles.clone(),
+            // `apply_game_options` has just run, so the model carries this game's own choice.
+            engine,
         };
         match GameSession::create(request, &mut self.settings) {
             Ok(session) => {
                 session.set_smooth_gc(self.settings.get(SettingId::EmuLuaSmoothGc).as_bool());
                 self.session = Some(session);
+                // Xnes3D+: Smart 3D starts from what it learned about this game before.
+                self.load_smart3d_memory();
                 // Whichever output is open takes the new core's samples: the audio thread's
                 // console slot (Q-153), or the mixer's source on the classic output of AUDIO-2.
                 self.attach_console();
@@ -485,6 +589,100 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         self.games.resolve(&game.id).unwrap_or_else(|| game.clone())
     }
 
+    /// The hardware-fidelity switches of the emulation tab (lot FIDELITY), in the order
+    /// `advance_launch` hands them to the core: OAM corruption, PPU bus conflicts, OAMADDR
+    /// defect, OAM decay, power-on at the top of the picture, `$2006` delay, `$2006` and `$2000`
+    /// glitches, palette corruption, PPU reset line.
+    fn fidelity_switches(&self) -> [bool; 10] {
+        [
+            SettingId::EmuOamCorruption,
+            SettingId::EmuPpuBusConflicts,
+            SettingId::EmuOamaddrBug,
+            SettingId::EmuOamDecay,
+            SettingId::EmuPowerOnTop,
+            SettingId::EmuPpu2006Delay,
+            SettingId::EmuPpu2006Glitch,
+            SettingId::EmuPpu2000Glitch,
+            SettingId::EmuPaletteCorruption,
+            SettingId::EmuPpuResetLine,
+        ]
+        .map(|id| self.settings.get(id).as_bool())
+    }
+
+    /// `emu.vs_dip_1` to `emu.vs_dip_8` as one byte, bit `n` being switch `n + 1` (lot
+    /// MAPPERS-N).
+    fn vs_dip_switches(&self) -> u8 {
+        [
+            SettingId::EmuVsDip1,
+            SettingId::EmuVsDip2,
+            SettingId::EmuVsDip3,
+            SettingId::EmuVsDip4,
+            SettingId::EmuVsDip5,
+            SettingId::EmuVsDip6,
+            SettingId::EmuVsDip7,
+            SettingId::EmuVsDip8,
+        ]
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| self.settings.get(**id).as_bool())
+        .fold(0u8, |byte, (bit, _)| byte | (1 << bit))
+    }
+
+    /// `emu.cpu_ppu_alignment` as the core takes it, 0 to 3 (lot FIDELITY step 28).
+    fn cpu_ppu_alignment(&self) -> u8 {
+        match self.settings.get(SettingId::EmuCpuPpuAlignment).as_int() {
+            // Random (lot FIDELITY step 36): drawn at each load, as a console draws it at each
+            // power-on.
+            4 => u8::try_from(power_on_seed() & 3).unwrap_or(3),
+            value => u8::try_from(value & 3).unwrap_or(3),
+        }
+    }
+
+    /// `emu.cpu_apu_parity` as the core takes it (FIDELITY-LEADS G5): whether the power-on
+    /// takes the 2A03 netlist's get / put parity and DMC timer.
+    fn netlist_get_put(&self) -> bool {
+        match self.settings.get(SettingId::EmuCpuApuParity).as_int() {
+            1 => true,
+            // Random: drawn at each load, as a console draws it at each power-on.
+            2 => power_on_seed() & 0x100 != 0,
+            _ => false,
+        }
+    }
+
+    /// The power-on memories and the PPU revision chosen in the emulation tab (lot CARTDB, lot
+    /// FIDELITY steps 36 and 37).
+    fn console_hardware(&self) -> ConsoleHardware {
+        ConsoleHardware {
+            power_on_ram: match self.settings.get(SettingId::EmuPowerOnRam).as_int() {
+                1 => zax_nes::PowerOnRam::Pattern,
+                2 => zax_nes::PowerOnRam::Ff,
+                3 => zax_nes::PowerOnRam::Random(power_on_seed()),
+                _ => zax_nes::PowerOnRam::Zero,
+            },
+            power_on_ppu_ram: match self.settings.get(SettingId::EmuPowerOnPpuRam).as_int() {
+                1 => zax_nes::PowerOnPpuRam::Blargg,
+                2 => zax_nes::PowerOnPpuRam::Random(power_on_seed() ^ 0x9E37),
+                _ => zax_nes::PowerOnPpuRam::Zero,
+            },
+            pre_g_revision: self.settings.get(SettingId::EmuPpuRevision).as_int() == 1,
+            oamaddr_write_corruption: self
+                .settings
+                .get(SettingId::EmuOamaddrWriteCorruption)
+                .as_bool(),
+            mmc3_revision: match self.settings.get(SettingId::EmuMmc3Revision).as_int() {
+                1 => zax_nes::Mmc3Revision::A,
+                2 => zax_nes::Mmc3Revision::B,
+                _ => zax_nes::Mmc3Revision::Cartridge,
+            },
+            letterless_cpu: self.settings.get(SettingId::EmuCpuRevision).as_int() == 1,
+        }
+    }
+
+    /// `audio.console_profile` as the core takes it: 0 for none.
+    pub(super) fn console_audio_profile(&self) -> usize {
+        usize::try_from(self.settings.get(SettingId::AudioConsoleProfile).as_int()).unwrap_or(0)
+    }
+
     fn advance_launch(&mut self, job: &mut LoadJob) -> Step {
         let Some(game) = job.game.clone() else {
             return Step::Failed(INVALID_ROM_MESSAGE.to_owned());
@@ -498,8 +696,14 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
                 // profile data is unloaded only when the game differs or is "2D Mode"
                 // (REQ-LOOP-021, REQ-PERS-006).
                 job.different_game = self.current_game_id() != Some(game.id.as_str());
-                job.reload_profile =
-                    self.session.is_none() || job.different_game || game.is_generic();
+                job.reload_profile = self.session.is_none()
+                    || job.different_game
+                    || game.is_generic()
+                    // Lot FCEUX-23 step 5: a changed engine is a new machine, so the session
+                    // cannot be kept. The choice takes effect on load and never mid-game.
+                    || self.session.as_ref().is_some_and(|session| {
+                        session.core().kind() != self.engine_for_game(&game.id)
+                    });
                 self.stop_current_game(false, job.reload_profile);
                 job.stage = 1;
                 Step::Continue
@@ -519,8 +723,30 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
                 let builtin_patches = self.builtin_patches_wanted();
                 let advanced = self.advanced_patches_wanted();
                 let forced = self.forced_patch();
+                let cartridge_db = self.settings.get(SettingId::EmuCartridgeDb).as_bool();
+                let rainbow_network = self.settings.get(SettingId::EmuRainbowNetwork).as_bool();
+                let vs_dip_switches = self.vs_dip_switches();
+                let fidelity = self.fidelity_switches();
+                let console_profile = self.console_audio_profile();
+                let alignment = self.cpu_ppu_alignment();
+                let netlist_get_put = self.netlist_get_put();
+                let fidelity_plus = self.settings.get(SettingId::EmuFidelityPlus).as_bool();
+                let fast_core = self.settings.get(SettingId::EmuFastCore).as_bool();
+                let console = self.console_hardware();
                 let result = match self.session.as_mut() {
                     Some(session) => {
+                        session.core_mut().set_cartridge_db(cartridge_db);
+                        session.core_mut().set_rainbow_network(rainbow_network);
+                        session.core_mut().set_vs_dip_switches(vs_dip_switches);
+                        apply_fidelity_switches(session.core_mut(), fidelity);
+                        session.core_mut().set_cpu_ppu_alignment(alignment);
+                        session.core_mut().set_netlist_get_put(netlist_get_put);
+                        session.core_mut().set_fidelity_plus(fidelity_plus);
+                        session.core_mut().set_fast_core(fast_core);
+                        session
+                            .core_mut()
+                            .set_console_audio_profile(console_profile);
+                        console.apply(session.core_mut());
                         session.core_mut().set_builtin_patches(builtin_patches);
                         session.core_mut().set_advanced_patches(advanced);
                         session.core_mut().set_forced_patch(forced);
@@ -628,6 +854,19 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         let Some(session) = self.session.as_mut() else {
             return Step::Failed(CORRUPTED_MESSAGE.to_owned());
         };
+        // Lot FCEUX-23 step 5: a state written by the other engine is refused **here**, before
+        // the engine is asked to read it, and with a message that says what to do. The two
+        // engines' blocks have nothing in common; each would also refuse the other's itself (its
+        // first four bytes name its engine), but "corrupted" is not what happened and not what a
+        // user can act on.
+        let wrote_it = session.core().state_core_id();
+        if !state.header.core_id.is_empty() && state.header.core_id != wrote_it {
+            self.log(&format!(
+                "savestate refused: it was written by {} and the engine in play is {wrote_it}",
+                state.header.core_id
+            ));
+            return Step::Failed(save_state_file::OTHER_ENGINE_MESSAGE.to_owned());
+        }
         // The state carries the original ROM: the hack applies to it as the setting says now.
         session.core_mut().set_builtin_patches(builtin_patches);
         session.core_mut().set_advanced_patches(advanced);
@@ -734,11 +973,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         // ring here, and the classic output of AUDIO-2 has nothing else that would — its mixer
         // keeps no gate and no ramp. On the default output `resynchronise_audio` below empties it
         // too, so this is simply the first of two idempotent calls there (AUDIO-2).
-        session
-            .core_mut()
-            .bus_mut()
-            .apu_mut()
-            .drop_pending_samples();
+        session.core_mut().drop_pending_samples();
         self.rollback.clear();
         self.frame_steps.clear();
         self.fast_forward.clear();
@@ -747,6 +982,31 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         self.start_achievements(job.state.as_ref());
         self.load_progress = 1.0;
         self.set_state(EmulationState::Running);
+        // Lot FCEUX-23 step 5: the visible marker. A user who reports "the 3D is wrong" has to be
+        // able to say which engine drew it (§6 of `docs/review/FCEUX-ENGINE.md` is why that
+        // matters), so a game that is **not** on Zaxnes's own core says so at every load; the
+        // performance overlay names the engine from then on, and the game's options carry the row
+        // itself. Zaxnes is the default and says nothing, as it always did.
+        // Lot FCEUX-48 step 2 adds the second half of the sentence: whether lot FCEUX-6's sweep
+        // validated this ROM for 3D on that engine. It is a marker and not a gate (§7), so a game
+        // nobody checked still plays — it is just told so, once, where the user will read it.
+        if let Some(engine) = self
+            .running_engine()
+            .filter(|kind| *kind != EngineKind::Zaxnes)
+        {
+            let message = match self.fceux_validation() {
+                fceux_validated::Status::Validated(rom) => format!(
+                    "Playing on the {engine} engine; this ROM is validated for 3D ({}).",
+                    rom.game
+                ),
+                fceux_validated::Status::NotValidated => format!(
+                    "Playing on the {engine} engine; this ROM is not validated for 3D on it."
+                ),
+                fceux_validated::Status::Unknown => format!("Playing on the {engine} engine."),
+            };
+            self.log(&message);
+            self.notifications.show_normal(&message);
+        }
         // REQ-AUD-010: no sound of the previous session is ever replayed. `set_state` has
         // already done this when the game was not running, but a slot loaded while it plays
         // leaves the state alone, so it is asked for here too (Q-153 §4). The call empties the
@@ -756,7 +1016,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
     }
 
     /// Q-031: the region of the ROM when the automatic mode is on, the profile's otherwise.
-    fn apply_region_on_load(
+    pub(super) fn apply_region_on_load(
         &mut self,
         detected: NesRegion,
         profile_reloaded: bool,
@@ -766,12 +1026,9 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             self.settings.apply_detected_region(detected);
         } else if profile_reloaded {
             if let Some(settings) = game.profile.settings.as_ref() {
-                let mode = match settings.tv_mode {
-                    TvRegionMode::Pal => TvRegionSetting::Pal,
-                    TvRegionMode::Dendy => TvRegionSetting::Dendy,
-                    TvRegionMode::Multi => TvRegionSetting::Multi,
-                    _ => TvRegionSetting::Ntsc,
-                };
+                // The profile keeps the raw number (`TvRegionMode::Other`), so the famiclone
+                // regions (4, 5) come back too; unknown numbers read as NTSC.
+                let mode = TvRegionSetting::from_raw(settings.tv_mode.raw());
                 self.settings.set_tv_mode(mode);
             }
         }
@@ -872,7 +1129,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         };
         let enabled = self.builtin_patches_wanted();
         let key = (slot_id.to_owned(), record.saved_at, enabled);
-        if let Some(&status) = self.slot_patch_cache.borrow().get(&key) {
+        if let Some(&status) = self.slot_caches.patch.borrow().get(&key) {
             return status;
         }
         let status = std::fs::read(self.slot_state_file(slot_id))
@@ -881,8 +1138,35 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             .map_or(SlotPatchStatus::Fits, |state| {
                 self.state_patch_status(&state)
             });
-        self.slot_patch_cache.borrow_mut().insert(key, status);
+        self.slot_caches.patch.borrow_mut().insert(key, status);
         status
+    }
+
+    /// The engine that wrote the state of `slot_id`, read from the core name its header records;
+    /// `None` for an empty slot, an unreadable file or a name this build does not know. A state
+    /// from before engines were recorded has an empty name, which is Zaxnes's.
+    #[must_use]
+    pub fn slot_engine(&self, slot_id: &str) -> Option<zax_core_api::EngineKind> {
+        let record = self
+            .slots
+            .find(slot_id)
+            .filter(|record| record.is_occupied())?;
+        let key = (slot_id.to_owned(), record.saved_at);
+        if let Some(&engine) = self.slot_caches.engine.borrow().get(&key) {
+            return engine;
+        }
+        let engine = std::fs::read(self.slot_state_file(slot_id))
+            .ok()
+            .and_then(|bytes| save_state_file::try_read(&bytes))
+            .and_then(|state| engine_of_core_id(&state.header.core_id));
+        self.slot_caches.engine.borrow_mut().insert(key, engine);
+        engine
+    }
+
+    /// The engine the game in play runs on, `None` without a game.
+    #[must_use]
+    pub fn engine_in_play(&self) -> Option<zax_core_api::EngineKind> {
+        self.session.as_ref().map(|session| session.core().kind())
     }
 
     /// Sets the components of the built-in hack as the state of `slot_id` had them, then loads it:
@@ -949,7 +1233,7 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         ))
     }
 
-    fn attach_battery(&mut self, import_saved: bool) {
+    pub(super) fn attach_battery(&mut self, import_saved: bool) {
         let Some(fingerprint) = self.current_rom_fingerprint() else {
             return;
         };
@@ -965,10 +1249,17 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             self.log("the battery RAM file could not be renamed after the ROM.");
         }
         let saved = self.battery.attach(&self.paths, &name);
+        let flash = self.flash.attach(&self.paths, &name);
         // A savestate carries its own cartridge RAM, exactly as a console would, so it must not
         // be overwritten by the file on disk (REQ-PERS-060, notes).
         if let (true, Some(saved), Some(session)) = (import_saved, saved, self.session.as_mut()) {
             session.core_mut().import_battery_ram(&saved);
+        }
+        // Lot MAPPERS-P: the flash save the same way, and a savestate carries its flash too.
+        if let (true, Some(flash), Some(session)) = (import_saved, flash, self.session.as_mut()) {
+            if !session.core_mut().import_flash_save(&flash) {
+                self.log("the flash save file could not be applied to this ROM.");
+            }
         }
     }
 
@@ -997,4 +1288,20 @@ fn state_components(state: &SaveStateContent) -> Vec<String> {
             Vec::new()
         }
     })
+}
+
+/// The engine a savestate header's core name names: empty is Zaxnes (states written before the
+/// name was recorded), otherwise the engine whose [`zax_core_api::state_core_name`] it is.
+fn engine_of_core_id(core_id: &str) -> Option<zax_core_api::EngineKind> {
+    if core_id.is_empty() {
+        return Some(zax_core_api::EngineKind::Zaxnes);
+    }
+    zax_core_api::EngineKind::ALL
+        .into_iter()
+        .find(|&engine| zax_core_api::state_core_name(engine) == core_id)
+}
+
+/// `path` made absolute, as the library keeps the ROMs' paths.
+fn full_path(path: &str) -> std::path::PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path))
 }

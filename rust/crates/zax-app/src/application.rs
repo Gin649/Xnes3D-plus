@@ -79,6 +79,10 @@ pub type AppHost = EmulationHost<LibraryGameCatalog, SceneView>;
 /// The folder of the user data where the linked shader programs are kept.
 const SHADER_CACHE_FOLDER: &str = "shader-cache";
 
+/// How long before the refresh the real-time pad stops running the machine, so the swap is not
+/// missed (lot FIDPLUS-B step 5).
+const REALTIME_MARGIN: Duration = Duration::from_micros(2500);
+
 /// The window of AMD-051 REQ-E3D-646, as the diagnostic line states it: a late object has not
 /// been drawable for this many emulated frames.
 #[allow(clippy::cast_sign_loss)] // A positive constant of the specification.
@@ -88,7 +92,12 @@ const LATE_OBJECT_FRAMES_REPORTED: u32 = zax_engine3d::draw_list::LATE_OBJECT_FR
 /// except for smoke runs and screenshot runs.
 #[must_use]
 pub const fn should_open_fullscreen(options: &AppOptions, persisted: bool) -> bool {
-    (persisted || options.handheld) && !options.smoke_test && options.ui_shot_directory.is_none()
+    // Web build: the page is the window; SDL's full screen there would size the drawing for the
+    // whole screen while the page shows the canvas at its own size.
+    (persisted || options.handheld)
+        && !options.smoke_test
+        && options.ui_shot_directory.is_none()
+        && !cfg!(target_os = "emscripten")
 }
 
 /// What the window's pacing should be: the settings, except that a smoke run is not paced by
@@ -204,8 +213,21 @@ impl ZaxApplication {
 
     fn run_inner(&self) -> Result<i32, String> {
         let mut running = Running::build(&self.options)?;
-        while running.frame()? {}
-        Ok(running.finish())
+        // Web build: the browser drives the frames (one per display refresh) and the loop
+        // never returns to here.
+        #[cfg(target_os = "emscripten")]
+        zax_platform::web::run_main_loop(move || match running.frame() {
+            Ok(go_on) => go_on,
+            Err(message) => {
+                app_log::error(&message);
+                false
+            }
+        });
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            while running.frame()? {}
+            Ok(running.finish())
+        }
     }
 }
 
@@ -237,6 +259,8 @@ struct Running {
     cursor: CursorAutoHide,
     state: RunState,
     last: Instant,
+    /// When the import folder was last looked at (`import_folder.rs`), once a second.
+    import_checked: Option<Instant>,
     /// The frame profiler (`ui.profiler`, or `ZAXNES_PROFILE=1`) and the clock of the loop's
     /// stages.
     profiler: Option<FrameProfiler>,
@@ -297,6 +321,15 @@ impl Running {
         let (store, mut model) = load_settings(options, &paths);
         let demo_rom = install_demo_game(&paths, &model);
         install_bundled_profiles(&paths);
+        // Web build: which profiles are the program's own, not the player's.
+        let shipped: Vec<&str> = std::iter::once(crate::demo_game::PROFILE_NAME)
+            .chain(
+                crate::bundled_profiles::PROFILES
+                    .iter()
+                    .map(|(name, _)| *name),
+            )
+            .collect();
+        crate::web_bridge::report_shipped_profiles(&shipped);
         #[cfg(feature = "shaders")]
         install_shader_pack(&paths);
         let mut catalog = LibraryGameCatalog::open(asset_root.as_deref(), &paths, Box::new(log));
@@ -343,6 +376,8 @@ impl Running {
             Some(Box::new(log)),
         );
         let pacing_state = pacing.apply(&mut window, &model);
+        // The screen's orientation (Android, owner request).
+        window.set_orientation(orientation_of(&model));
         let profiling = frame_profiler::requested_by_environment()
             || model.get(SettingId::UiProfiler).as_bool();
         if profiling {
@@ -423,7 +458,9 @@ impl Running {
         if options.editor {
             host.update_settings(|model| model.set_editor_mode(true));
         }
-        let mut ui = ImguiFrontend::new(ui_graphics, &host, options, height)?;
+        // The interface is sized by the screen's shorter side, its height in landscape (owner
+        // request: a phone held upright keeps the sizes it has on its side, and its baked fonts).
+        let mut ui = ImguiFrontend::new(ui_graphics, &host, options, width.min(height))?;
         ui.set_clipboard(window.clipboard());
         // REQ-LOOP-077 is presentation, so it only exists for the renderer that presents here.
         let gpu_queue = match &graphics {
@@ -446,6 +483,7 @@ impl Running {
             cursor: CursorAutoHide::new(),
             state: RunState::new(renderer_name, version),
             last: Instant::now(),
+            import_checked: None,
             profiler: profiling.then(|| FrameProfiler::new(Instant::now())),
             clock: StageClock::new(profiling),
             rate_count: (0, 0),
@@ -497,6 +535,30 @@ impl Running {
         }
     }
 
+    /// The import folder (owner request, 2026-11-20): what waits there is imported, once a
+    /// second and never while a game is on the screen; the lists then show the new profiles.
+    fn import_waiting_files(&mut self) {
+        if self.ui.game_on_screen() && self.host.current_game_id().is_some() {
+            return;
+        }
+        let now = Instant::now();
+        // The first look a second after the start: the interface has its language by then, and
+        // its notifications say what came of the import in it.
+        let Some(checked) = self.import_checked else {
+            self.import_checked = Some(now);
+            return;
+        };
+        if now.duration_since(checked).as_secs_f32() < 1.0 {
+            return;
+        }
+        self.import_checked = Some(now);
+        // Web build: the page's pages of games changed (one added, one game downloaded).
+        let imported = crate::import_folder::process(&mut self.host) > 0;
+        if imported | crate::web_bridge::take_games_changed() {
+            self.ui.profiles_imported(&self.host);
+        }
+    }
+
     #[allow(clippy::too_many_lines)] // One host frame, its steps in their order.
     fn frame(&mut self) -> Result<bool, String> {
         self.follow_the_profiler_setting();
@@ -506,10 +568,27 @@ impl Running {
         self.take_launch_request();
         self.take_android_answers();
         self.auto_load_state();
+        // Web build: the ROM the page's dialogue chose, and whether a game is on the screen
+        // for the page (it hides its own button then). No-ops elsewhere.
+        if let Some(answer) = crate::web_bridge::take_open_answer() {
+            // `?profile=` named the 3D profile to play it with: straight into the game.
+            let profile = answer
+                .profile
+                .as_deref()
+                .and_then(|wanted| self.host.games().find_profile(wanted));
+            match profile {
+                Some(game_id) => self.host.launch_rom_with_profile(&answer.path, &game_id),
+                None => self
+                    .host
+                    .enqueue(Command::OpenRom, CommandArgs::of_text(&answer.path)),
+            }
+        }
+        crate::web_bridge::report_playing(self.ui.game_on_screen());
+        self.import_waiting_files();
         let frame_begin = self.clock.start();
         let busy_begin = Instant::now();
         let mark = self.clock.start();
-        if self.pump_events() {
+        if self.pump_events() || self.state.close_requested {
             return Ok(false);
         }
         self.state.frame_time = self.host.pacer.elapsed_seconds();
@@ -538,7 +617,9 @@ impl Running {
         let pipelined = self.next_frame_pipelined();
         self.host.defer_conversion = pipelined;
         let mark = self.clock.start();
-        let emulated = self.host.tick(real, &snapshot);
+        // The frames the real-time pad finished during the last wait are this frame's too.
+        let mut emulated =
+            self.host.tick(real, &snapshot) + std::mem::take(&mut self.state.carried_frames);
         self.log_rates(emulated);
         self.state.emulated_now = emulated;
         self.source.end_sample();
@@ -551,6 +632,16 @@ impl Running {
             );
             self.clock.merge(&inner);
         }
+        // Lot FIDPLUS-D3a (`emu.late_present`): the wait before the refresh comes first, so the
+        // picture drawn below is the machine as it stands just before the refresh.
+        let late = self.late_present();
+        if late {
+            let margin = self.late_margin();
+            self.run_the_realtime_pad(margin);
+            emulated += std::mem::take(&mut self.state.carried_frames);
+            self.state.emulated_now = emulated;
+        }
+        let render_begin = Instant::now();
         let mark = self.clock.start();
         update_scene(&mut self.host, &mut self.state);
         {
@@ -573,6 +664,7 @@ impl Running {
             Duration::ZERO
         };
         self.close_the_gpu_queue(bounded);
+        self.state.last_render = render_begin.elapsed();
         self.serve_the_editor();
         self.carry_out_ui_effects();
         let mark = self.clock.start();
@@ -597,9 +689,13 @@ impl Running {
             }
             return Ok(false);
         }
+        if !late {
+            self.run_the_realtime_pad(REALTIME_MARGIN);
+        }
         let mark = self.clock.start();
         self.window.swap();
         self.clock.stop(Stage::Swap, mark);
+        self.state.last_swap = Some(Instant::now());
         let mark = self.clock.start();
         self.window.pace();
         self.clock.stop(Stage::Pacer, mark);
@@ -649,6 +745,61 @@ impl Running {
         }
     }
 
+    /// Lot FIDPLUS-B step 5 (`emu.realtime_input`, `docs/design/REALTIME-PACING.md`): the time
+    /// the frame would spend waiting for its swap is spent instead reading the pads about every
+    /// millisecond and running the machine up to the present, so that it follows the clock and
+    /// the game reads a pad at most a millisecond old instead of one sampled once a refresh
+    /// (9.3 ms on average, 16 at worst, measured with `padbench`). Stops 2.5 ms before the
+    /// refresh is due, so the swap is not missed; nothing to do without a refresh to wait for
+    /// (no vsync and no frame cap), when the setting is off or the game is not running.
+    fn run_the_realtime_pad(&mut self, margin: Duration) {
+        const STEP: Duration = Duration::from_millis(1);
+        if !self.host.realtime_slices_active() {
+            return;
+        }
+        let (Some(period), Some(last_swap)) = (self.paced_budget(), self.state.last_swap) else {
+            return;
+        };
+        let Some(deadline) = (last_swap + period).checked_sub(margin) else {
+            return;
+        };
+        while Instant::now() + STEP < deadline {
+            std::thread::sleep(STEP);
+            if self.pump_events() {
+                self.state.close_requested = true;
+                return;
+            }
+            let keyboard = (!self.ui.wants_keyboard())
+                .then_some(&self.input.keyboard as &dyn zax_platform::input::KeyboardDevice);
+            let (player_one, player_two) = self
+                .source
+                .sample_players(keyboard, &mut self.input.gamepads);
+            self.state.carried_frames += self.host.realtime_slice(player_one, player_two);
+        }
+    }
+
+    /// Whether `emu.late_present` applies to this frame: on, with the real-time pad running and a
+    /// refresh to wait for (lot FIDPLUS-D3a).
+    fn late_present(&self) -> bool {
+        self.host
+            .settings()
+            .get(SettingId::EmuLatePresent)
+            .as_bool()
+            && self.host.realtime_slices_active()
+            && self.paced_budget().is_some()
+    }
+
+    /// How long before the refresh the late wait ends: the last frame's scene and draw time plus
+    /// 2 ms, at least the real-time pad's own margin, at most three quarters of the refresh (a
+    /// draw that slow gains nothing from waiting).
+    fn late_margin(&self) -> Duration {
+        let ceiling = self
+            .paced_budget()
+            .map_or(Duration::from_millis(12), |period| period.mul_f32(0.75));
+        (self.state.last_render + Duration::from_millis(2))
+            .clamp(REALTIME_MARGIN, ceiling.max(REALTIME_MARGIN))
+    }
+
     /// Feeds the window's events to the interface and the input layer. Returns whether the
     /// window is closing.
     fn pump_events(&mut self) -> bool {
@@ -682,7 +833,7 @@ impl Running {
         }
         let consumed = self.ui.consumed_keys(&self.input.keyboard);
         self.source.consume_keys(consumed);
-        let snapshot = self.source.sample(
+        let mut snapshot = self.source.sample(
             real,
             DeviceRefs {
                 keyboard: Some(&self.input.keyboard),
@@ -690,6 +841,49 @@ impl Running {
                 hub: &mut self.input.gamepads,
             },
         );
+        // The touch pad's rewind and fast forward are the first player's hotkeys (owner
+        // request), so that the double and triple press work on them too.
+        let (rewind, forward) = self.input.touch.hotkeys_held();
+        if rewind {
+            snapshot.player_one |= crate::input::input_action::InputAction::ROLL_BACK;
+        }
+        if forward {
+            snapshot.player_one |= crate::input::input_action::InputAction::FAST_FORWARD;
+        }
+        // Web build: no virtual controller carries the pad's buttons, they are the first
+        // player's here (the whole pad, or its extras alone beside a real gamepad).
+        {
+            use crate::input::input_action::InputAction;
+            use zax_platform::input::touch::TouchControl;
+            for (control, action) in [
+                (TouchControl::Up, InputAction::UP),
+                (TouchControl::Down, InputAction::DOWN),
+                (TouchControl::Left, InputAction::LEFT),
+                (TouchControl::Right, InputAction::RIGHT),
+                (TouchControl::A, InputAction::A),
+                (TouchControl::B, InputAction::B),
+                (TouchControl::Select, InputAction::SELECT),
+                (TouchControl::Start, InputAction::START),
+                (TouchControl::Menu, InputAction::MENU),
+            ] {
+                let held = self.input.touch.take_held(control);
+                if held {
+                    snapshot.player_one |= action;
+                }
+                // The console interface reads its own pad: the menu button opens its in-game
+                // menu (on Android the virtual controller's guide button does that).
+                // Web only: elsewhere the virtual controller's guide button already does it, and
+                // writing the button every frame would cut a Menu held on a real pad or key.
+                if cfg!(target_os = "emscripten") && control == TouchControl::Menu {
+                    self.ui.set_touch_menu(held);
+                }
+            }
+        }
+        for command in self.input.touch.take_commands() {
+            if let Some(command) = Command::from_name(command) {
+                self.host.enqueue(command, CommandArgs::default());
+            }
+        }
         let capturing = self.source.rebinding().suppresses_actions();
         self.ui.handle_shortcuts(
             &mut self.host,
@@ -829,7 +1023,11 @@ impl Running {
     /// Sizes the view for the window and decides whether the render-skip rule keeps the
     /// previous image.
     fn plan_view(&mut self, emulated: u32, width: i32, height: i32) -> Result<ViewPlan, String> {
-        let view_height = (height - to_i32_f(self.ui.chrome_height())).max(1);
+        let below_chrome = (height - to_i32_f(self.ui.chrome_height())).max(1);
+        // Portrait on a touch screen (owner request): the game takes the top of the screen at
+        // 4:3, the whole width, and the touch pad the band left under it.
+        let (view_height, view_bottom) = portrait_view(width, below_chrome);
+        self.host.set_widescreen_held_off(view_bottom > 0);
         self.state.view_size = (width.max(1), view_height);
         let automatic = self.resolution.active;
         let factor = if automatic {
@@ -902,6 +1100,7 @@ impl Running {
         ) && !self.state.picture_between;
         Ok(ViewPlan {
             view_height,
+            view_bottom,
             size: (scene_width, scene_height),
             skip,
         })
@@ -935,22 +1134,43 @@ impl Running {
             frames_per_second: debug.frames_per_second as f32,
             profile_line: self.profiler.as_ref().map_or("", FrameProfiler::summary),
         };
-        if zax_platform::input::touch::offered() {
-            let mode = zax_platform::input::touch::TouchPadMode::from_setting(
-                frame
-                    .host
-                    .settings()
-                    .get(zax_settings::catalogue::SettingId::InputTouchPad)
-                    .as_int(),
-            );
+        if zax_platform::input::touch::fingers_followed() {
+            // The gestures alone (a computer's touch screen): the pad is never drawn.
+            let mode = if zax_platform::input::touch::gestures_only() {
+                zax_platform::input::touch::TouchPadMode::Off
+            } else {
+                zax_platform::input::touch::TouchPadMode::from_setting(
+                    frame
+                        .host
+                        .settings()
+                        .get(zax_settings::catalogue::SettingId::InputTouchPad)
+                        .as_int(),
+                )
+            };
+            let options = touch_options(frame.host.settings());
             #[allow(clippy::cast_precision_loss)] // window sizes are far below 2^24
             let size = |(width, height): (u32, u32)| [width as f32, height as f32];
             let playing = self.ui.game_on_screen();
-            self.input
-                .touch
-                .update(mode, playing, size(sizes.window), size(sizes.drawable));
+            let drawable = size(sizes.drawable);
+            // Portrait: the pad's band starts where the game's view ends.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Window sizes.
+            let pad_top = {
+                let (width, height) = (drawable[0] as i32, drawable[1] as i32);
+                let (view, below) = portrait_view(width, height);
+                (below > 0).then_some(view as f32)
+            };
+            self.input.touch.update(
+                mode,
+                options,
+                playing,
+                size(sizes.window),
+                drawable,
+                pad_top,
+            );
             let (taps, swipe) = (self.input.touch.take_taps(), self.input.touch.take_scroll());
-            self.ui.set_touch_pad(self.input.touch.view(), taps, swipe);
+            let point = self.input.touch.free_point();
+            self.ui
+                .set_touch_pad(self.input.touch.view(), taps, swipe, point);
         }
         operation(&mut self.ui, &mut frame, sizes, &debug);
     }
@@ -1024,6 +1244,12 @@ impl Running {
                 log(&format!("saves folder chosen: '{folder}' (used from the next start)."));
                 crate::android_bridge::set_saves_folder(folder);
             }
+        }
+        // Xnes3D+: new box art or information, read again by the game list.
+        let done = root.join(crate::android_bridge::MEDIA_DONE_FILE);
+        if done.exists() {
+            let _ = std::fs::remove_file(&done);
+            self.ui.forget_media();
         }
         let inbox = root.join(crate::android_bridge::PROFILE_INBOX);
         let Ok(entries) = std::fs::read_dir(&inbox) else {
@@ -1519,15 +1745,22 @@ impl Running {
 
     /// The time a displayed frame has, as the pacing in force sets it: the swap interval at the
     /// display's refresh rate, or the frame cap's period; none when nothing paces the frames.
+    /// The display's refresh rate, 60 when the system does not say: a display mode may report 0
+    /// for "unknown" (browsers do), which must not become one frame a second.
+    fn refresh_rate(&self) -> i32 {
+        self.window
+            .window()
+            .display_mode()
+            .map(|mode| mode.refresh_rate)
+            .ok()
+            .filter(|&rate| rate > 0)
+            .unwrap_or(60)
+    }
+
     fn paced_budget(&self) -> Option<Duration> {
         let interval = self.window.vsync_interval();
         if interval > 0 {
-            let refresh = self
-                .window
-                .window()
-                .display_mode()
-                .map_or(60, |mode| mode.refresh_rate)
-                .max(1);
+            let refresh = self.refresh_rate();
             return Some(Duration::from_secs_f64(
                 f64::from(interval) / f64::from(refresh),
             ));
@@ -1540,12 +1773,7 @@ impl Running {
     fn display_rate(&self) -> f64 {
         let interval = self.window.vsync_interval();
         if interval > 0 {
-            let refresh = self
-                .window
-                .window()
-                .display_mode()
-                .map_or(60, |mode| mode.refresh_rate)
-                .max(1);
+            let refresh = self.refresh_rate();
             return f64::from(refresh) / f64::from(interval);
         }
         self.window
@@ -1555,12 +1783,7 @@ impl Running {
 
     /// The time one displayed frame may take: the swap interval at the display's refresh rate.
     fn frame_budget(&self) -> Duration {
-        let refresh = self
-            .window
-            .window()
-            .display_mode()
-            .map_or(60, |mode| mode.refresh_rate)
-            .max(1);
+        let refresh = self.refresh_rate();
         // The interval in force, which `video.half_rate_3d` may double.
         let interval = self.window.vsync_interval().max(1);
         Duration::from_secs_f64(f64::from(interval) / f64::from(refresh))
@@ -1578,6 +1801,7 @@ impl Running {
     ) -> Result<Duration, String> {
         let ViewPlan {
             view_height,
+            view_bottom,
             size: (scene_width, scene_height),
             skip,
         } = self.plan_view(emulated, width, height)?;
@@ -1600,7 +1824,7 @@ impl Running {
                 None,
                 &mut self.ui,
                 (width, height),
-                view_height,
+                (view_height, view_bottom),
             );
             return Ok(Duration::ZERO);
         };
@@ -1636,11 +1860,19 @@ impl Running {
                     draw_list: Some(displayed),
                     nes_picture: &[],
                     nes_picture_height: 0,
+                    nes_picture_emphasis: &[],
+                    nes_picture_rgb: &[],
                 };
                 draw_scene(graphics, view, &scene, &frame, shadow_reported, clock)
             };
             let mark = clock.start();
-            graphics.draw_window(window, Some(view), ui, (width, height), view_height);
+            graphics.draw_window(
+                window,
+                Some(view),
+                ui,
+                (width, height),
+                (view_height, view_bottom),
+            );
             clock.stop(Stage::Ui, mark);
             let waiting = Instant::now();
             let converted = conversion.map_or(Duration::ZERO, |conversion| {
@@ -1670,6 +1902,7 @@ impl Running {
         self.request_shader();
         let ViewPlan {
             view_height,
+            view_bottom,
             size: (scene_width, scene_height),
             skip,
         } = self.plan_view(emulated, width, height)?;
@@ -1697,7 +1930,7 @@ impl Running {
             self.host.view(),
             &mut self.ui,
             (width, height),
-            view_height,
+            (view_height, view_bottom),
         );
         let shot = self.ui.advance_shots();
         if let Some(path) = shot.capture {
@@ -1737,6 +1970,7 @@ impl Running {
 
     /// REQ-LOOP-052: the current game is stopped (End hook), the settings and the slot metadata
     /// are written, and nothing is auto-saved.
+    #[cfg_attr(target_os = "emscripten", allow(dead_code))] // the browser never ends the loop
     fn finish(mut self) -> i32 {
         ImguiFrontend::close_capture(&mut self.source);
         let emulated_frames = self.host.emulated_frames();
@@ -1754,13 +1988,22 @@ fn load_settings(options: &AppOptions, paths: &UserDataPaths) -> (SettingsStore,
     let mut model = SettingsModel::new();
     // The economical defaults of a PortMaster handheld; the Android package keeps the desktop's
     // (owner request: some devices are powerful, each player tunes for his own).
-    if options.handheld && !cfg!(target_os = "android") {
+    // Not in the browser either: the web build runs as a handheld for its interface only.
+    if options.handheld && !cfg!(any(target_os = "android", target_os = "emscripten")) {
         handheld::defaults::apply(&mut model);
     }
     if cfg!(target_os = "android") {
         handheld::defaults::apply_android(&mut model);
         // Xnes3D+: the interface is in English.
         model.set(SettingId::UiLanguage, SettingValue::from("en"));
+    }
+    // Web build (owner request): starts on the fastest preset, without the real-time pad, whose
+    // millisecond polling would hold the browser's only thread until each refresh.
+    if cfg!(target_os = "emscripten") {
+        handheld::defaults::apply_fastest(&mut model);
+        model.set_environment_default(SettingId::EmuRealtimeInput, SettingValue::Bool(false));
+        // The widescreen on by default (owner request): the ROMs made for it fill the page.
+        model.set_environment_default(SettingId::VideoWidescreen, SettingValue::Enum(1));
     }
     // Rust-only (owner request): the region comes from the ROM header unless the user turned the
     // automatic mode off, so a European dump runs at 50 Hz (`emu.auto_tv_mode` is off in C#).
@@ -1825,7 +2068,9 @@ fn build_host(parts: HostParts<'_>) -> AppHost {
     };
     let mut mixer = AudioMixer::new(parts.sample_rate, Some(library), TrackRandom::new(seed()));
     mixer.set_volume(parts.model.effective_volume());
-    mixer.set_menu_music_enabled(parts.model.menu_music());
+    // Owner (2026-11-17): no music in the interface, only its sound effects. The setting stays
+    // in the model for the compatibility of settings.json, without effect.
+    mixer.set_menu_music_enabled(false);
     let mut options =
         EmulationHostOptions::new(parts.paths.clone(), parts.model, parts.scene, parts.catalog);
     options.mixer = Some(mixer);
@@ -2109,6 +2354,16 @@ fn open_log_file(paths: &UserDataPaths) {
             "NOT writable: settings and saves will not be kept"
         }
     ));
+    let packs = zax_nes::pack_files::report();
+    log(&format!(
+        "hack packs: {} built in, {} in '{}'",
+        packs.embedded,
+        packs.from_folder,
+        packs.folder.as_deref().map_or_else(
+            || "(no folder)".to_owned(),
+            |folder| folder.display().to_string()
+        )
+    ));
 }
 
 /// The Rust-only choices of the host's loop: forced catch-up, rewind, emulation thread and
@@ -2117,7 +2372,9 @@ fn configure_pacing(host: &mut AppHost, options: &AppOptions) {
     host.catch_up = options.catch_up;
     // No rewind on a PortMaster handheld (owner request): its snapshot every 60 frames costs a
     // spike. The Android package has it, as the desktop (owner request).
-    host.rollback_enabled = !options.handheld || cfg!(target_os = "android");
+    // The web build, a handheld for its interface only, keeps it too.
+    host.rollback_enabled =
+        !options.handheld || cfg!(any(target_os = "android", target_os = "emscripten"));
     host.separate_core = separate_core(options);
     // RO-2 part 4: a handheld build, `--handheld`, or a desktop opened in its console mode. It
     // is the launch-time choice of interface; F1 switching the presentation later does not make
@@ -2151,7 +2408,8 @@ fn separate_core(options: &AppOptions) -> bool {
     {
         Ok("1") => true,
         Ok("0") => false,
-        _ => options.handheld,
+        // The browser gives the program one thread.
+        _ => options.handheld && !cfg!(target_os = "emscripten"),
     }
 }
 
@@ -2240,10 +2498,13 @@ fn log_window_icon(window: &mut HostWindow) {
 /// the render-skip rule keeps the previous image.
 struct ViewPlan {
     view_height: i32,
+    /// The pixels under the view: the touch pad's band in portrait, none otherwise.
+    view_bottom: i32,
     size: (i32, i32),
     skip: bool,
 }
 
+#[allow(clippy::struct_excessive_bools)] // independent loop flags, not a state machine
 struct RunState {
     rendered_frames: u64,
     scene_frames: u64,
@@ -2254,6 +2515,7 @@ struct RunState {
     /// automatic resolution, and its rounding with it).
     view_size: (i32, i32),
     renderer_name: String,
+    #[cfg_attr(target_os = "emscripten", allow(dead_code))] // the browser never ends the loop
     version: String,
     shadow_map_reported: bool,
     drag_origin: Option<[f32; 2]>,
@@ -2264,6 +2526,12 @@ struct RunState {
     picture: Vec<u8>,
     /// Its rows.
     picture_height: usize,
+    /// Its colour emphasis, empty without any (lot FIDPLUS-D2b).
+    picture_emphasis: Vec<u8>,
+    /// It decoded from the composite signal (`video.composite_signal`), three bytes a pixel;
+    /// empty with the option off.
+    picture_rgb: Vec<u8>,
+    composite: zax_nes::composite::RowDecoder,
     /// Whether its playfield is drawn between two frames (the experimental 120 Hz scrolling):
     /// every display frame is then drawn, a new emulated frame or not.
     picture_between: bool,
@@ -2273,6 +2541,16 @@ struct RunState {
     /// When this display frame began, on the frame pacer's clock.
     frame_time: f64,
     scroll_log: Option<std::fs::File>,
+    /// Lot FIDPLUS-B step 5: the frames the real-time pad finished while the last displayed frame
+    /// waited for its swap, which the next one shows.
+    carried_frames: u32,
+    /// A quit the real-time pad's event pump saw, acted on at the next frame.
+    close_requested: bool,
+    /// When the last swap returned: the display's refresh, the start of the wait the real-time
+    /// pad fills.
+    last_swap: Option<Instant>,
+    /// How long the last frame's scene and draw took (`emu.late_present`'s margin).
+    last_render: Duration,
 }
 
 impl RunState {
@@ -2291,11 +2569,18 @@ impl RunState {
             was_two_dimensional: false,
             picture: Vec::new(),
             picture_height: 0,
+            picture_emphasis: Vec::new(),
+            picture_rgb: Vec::new(),
+            composite: zax_nes::composite::RowDecoder::default(),
             picture_between: false,
             emulated_now: 0,
             frame_time: 0.0,
             scroll_log: std::env::var_os("ZAXNES_SCROLL_LOG")
                 .and_then(|path| std::fs::File::create(path).ok()),
+            carried_frames: 0,
+            close_requested: false,
+            last_swap: None,
+            last_render: Duration::ZERO,
         }
     }
 }
@@ -2367,6 +2652,7 @@ fn smoke_run_is_over(options: &AppOptions, host: &AppHost, state: &RunState) -> 
     }
 }
 
+#[cfg_attr(target_os = "emscripten", allow(dead_code))] // the browser never ends the loop
 fn finish(options: &AppOptions, state: &RunState, emulated: i64) -> i32 {
     if !options.smoke_test {
         return 0;
@@ -2692,6 +2978,44 @@ fn pull_head_on(
     }
 }
 
+/// The height of the game's view in a window `width` wide with `height` pixels under its menu
+/// bar, and the band left under it: in portrait on a touch screen, the whole width at 4:3 on top
+/// and the rest for the touch pad (owner request); the whole height otherwise.
+#[must_use]
+pub fn portrait_view(width: i32, height: i32) -> (i32, i32) {
+    if !zax_platform::input::touch::offered() || height <= width {
+        return (height, 0);
+    }
+    let view = (width * 3 / 4).clamp(1, height);
+    (view, height - view)
+}
+
+/// The orientation the screen may take, from the settings.
+fn orientation_of(
+    settings: &zax_settings::model::SettingsModel,
+) -> zax_platform::window::Orientation {
+    zax_platform::window::Orientation::from_setting(settings.get(SettingId::UiOrientation).as_int())
+}
+
+/// The touch pad's size and vibrations, from the settings.
+fn touch_options(
+    settings: &zax_settings::model::SettingsModel,
+) -> zax_platform::input::touch::TouchOptions {
+    use zax_settings::catalogue::SettingId;
+    #[allow(clippy::cast_precision_loss)] // 50 to 175 percent.
+    let scale = settings
+        .get(SettingId::InputTouchScale)
+        .as_int()
+        .clamp(25, 300) as f32
+        / 100.0;
+    zax_platform::input::touch::TouchOptions {
+        scale,
+        haptic_dpad: settings.get(SettingId::InputTouchHapticDpad).as_int(),
+        haptic_buttons: settings.get(SettingId::InputTouchHapticButtons).as_int(),
+        extra: settings.get(SettingId::InputTouchExtra).as_int() != 0,
+    }
+}
+
 fn update_cursor(
     cursor: &mut CursorAutoHide,
     host: &AppHost,
@@ -2704,7 +3028,7 @@ fn update_cursor(
         host.state() == EmulationState::Running,
         snapshot.pointer_moved,
         real,
-    );
+    ) || cfg!(target_os = "emscripten"); // Web: the page keeps the mouse (it clicks the pad).
     if input.pointer.cursor_visible() != visible {
         input.pointer.set_cursor_visible(visible);
     }
@@ -2755,9 +3079,156 @@ fn widescreen_margin(choice: i32, extra: i32, size: (i32, i32)) -> (i32, i32) {
     )
 }
 
+/// `video.emphasis_3d` (lot FIDPLUS-D2b): the 3D scene's colours take the displayed frame's most
+/// common colour emphasis; off, or in 2D (whose picture carries its own), none.
+fn tint_scene(host: &AppHost, state: &mut RunState, two_dimensional: bool) {
+    let wanted = !two_dimensional && host.settings().get(SettingId::VideoEmphasis3d).as_bool();
+    let mut emphasis = 0;
+    if let (true, Some(session)) = (wanted, host.session()) {
+        session.copy_nes_emphasis(&mut state.picture_emphasis);
+        let mut counts = [0usize; 8];
+        for &bits in &state.picture_emphasis {
+            counts[usize::from(bits & 7)] += 1;
+        }
+        // An empty plane is a frame without emphasis; ties go to the lower value.
+        emphasis = (0..8u8)
+            .rev()
+            .max_by_key(|&bits| counts[usize::from(bits)])
+            .filter(|_| !state.picture_emphasis.is_empty())
+            .unwrap_or(0);
+    }
+    zax_engine3d::palette::set_scene_emphasis(emphasis);
+}
+
+/// The television of the signal options (lot REWRITE-UI): `video.tv_model` and its knobs.
+pub(crate) fn tv_look(settings: &SettingsModel) -> zax_nes::tv::TvLook {
+    let knob = |id: SettingId| settings.get(id).as_int();
+    let byte = |id: SettingId, low: i32, high: i32| knob(id).clamp(low, high);
+    zax_nes::tv::TvLook {
+        model: zax_nes::tv::TvModel::from_index(knob(SettingId::VideoTvModel)),
+        knobs: zax_nes::tv::TvKnobs {
+            hue: i8::try_from(byte(SettingId::VideoTvHue, -30, 30)).unwrap_or(0),
+            saturation: u8::try_from(byte(SettingId::VideoTvSaturation, 0, 200)).unwrap_or(100),
+            contrast: u8::try_from(byte(SettingId::VideoTvContrast, 50, 150)).unwrap_or(100),
+            brightness: i8::try_from(byte(SettingId::VideoTvBrightness, -50, 50)).unwrap_or(0),
+        },
+    }
+}
+
+/// What the composite decoder is set to (`video.composite_signal` on), and whether the dot crawl
+/// is frozen; `None` with the signal off.
+fn composite_options(host: &AppHost) -> Option<(zax_nes::composite::DecoderOptions, bool)> {
+    use zax_nes::composite::{DecoderOptions, Sharpness, Signal};
+    let settings = host.settings();
+    if !settings.get(SettingId::VideoCompositeSignal).as_bool() {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)] // 0 to 100
+    let fraction = |id: SettingId| settings.get(id).as_int().clamp(0, 100) as f32 / 100.0;
+    let options = DecoderOptions {
+        signal: match settings.get(SettingId::VideoSignalKind).as_int() {
+            1 => Signal::SVideo,
+            2 => Signal::Rf,
+            _ => Signal::Composite,
+        },
+        sharpness: match settings.get(SettingId::VideoDecoderSharpness).as_int() {
+            0 => Sharpness::Soft,
+            2 => Sharpness::Sharp,
+            _ => Sharpness::Normal,
+        },
+        comb: settings.get(SettingId::VideoCombFilter).as_bool(),
+        rf_noise: fraction(SettingId::VideoRfNoise),
+        rf_ghost: fraction(SettingId::VideoRfGhost),
+        look: tv_look(settings),
+    };
+    Some((
+        options,
+        settings.get(SettingId::VideoFrozenDotCrawl).as_bool(),
+    ))
+}
+
+/// The 2D picture's colours beside its indices (lot FIDPLUS-D2b): its emphasis, and with
+/// `composite` the whole picture decoded from the composite signal.
+fn colour_picture(
+    state: &mut RunState,
+    session: &GameSession,
+    width: usize,
+    composite: Option<(zax_nes::composite::DecoderOptions, bool)>,
+) {
+    session.copy_nes_emphasis(&mut state.picture_emphasis);
+    let video_phase = composite.map(|(options, frozen)| {
+        if state.composite.options() != &options {
+            state.composite.set_options(options);
+        }
+        let phase = session.nes_video_phase();
+        // Frozen: every frame at the same phase (the 2C07's does not crawl anyway).
+        if frozen {
+            phase & zax_nes::composite::PAL_VIDEO
+        } else {
+            phase
+        }
+    });
+    decode_composite(state, width, video_phase);
+}
+
+/// `video.composite_signal` (lot FIDPLUS-D2b step 2): the 2D picture decoded from the 2C02's
+/// composite signal, row by row, into `state.picture_rgb`. Row `r` of the screen starts its
+/// subcarrier 4 half-clocks after row `r - 1`; a widescreen margin column `c` before the screen is
+/// `8 c` half-clocks earlier. A pixel the overscan leaves out decodes as black and stays hidden.
+fn decode_composite(state: &mut RunState, width: usize, video_phase: Option<usize>) {
+    use zax_nes::composite::PHASES;
+    state.picture_rgb.clear();
+    let Some(video_phase) = video_phase else {
+        return;
+    };
+    let rows = state.picture_height;
+    if width == 0 || rows == 0 || state.picture.len() < width * rows {
+        return;
+    }
+    let margin = width.saturating_sub(256) / 2;
+    let margin_y = rows.saturating_sub(240) / 2;
+    state.picture_rgb.resize(width * rows * 3, 0);
+    let emphasis_ok = state.picture_emphasis.len() == state.picture.len();
+    for row in 0..rows {
+        // Phases mod 12, the margins counted backwards from the screen's first row and column.
+        let line = (row + PHASES * 60 - margin_y % PHASES) % PHASES;
+        let phase = (video_phase + 4 * line + PHASES * 1000 - (margin * 8) % PHASES) % PHASES;
+        let line_of = |row: usize| {
+            let pixels = &state.picture[row * width..(row + 1) * width];
+            let emphasis: &[u8] = if emphasis_ok {
+                &state.picture_emphasis[row * width..(row + 1) * width]
+            } else {
+                &[]
+            };
+            (pixels, emphasis)
+        };
+        let (pixels, emphasis) = line_of(row);
+        // The comb filter's rows around (none at the picture's top and bottom).
+        let neighbours = (row > 0 && row + 1 < rows).then(|| zax_nes::composite::Neighbours {
+            above: line_of(row - 1),
+            below: line_of(row + 1),
+        });
+        let out = &mut state.picture_rgb[row * width * 3..(row + 1) * width * 3];
+        if video_phase & zax_nes::composite::PAL_VIDEO != 0 {
+            // The 2C07 (lot FIDPLUS-D2c): the phase follows the picture line and column.
+            #[allow(clippy::cast_possible_wrap)] // a picture is far below i64::MAX rows
+            let (line, first_x) = (row as i64 - margin_y as i64, -(margin as i64));
+            state
+                .composite
+                .decode_row_pal(pixels, emphasis, line, first_x, out);
+        } else {
+            state
+                .composite
+                .decode_row_with(pixels, emphasis, phase, neighbours, out);
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)] // The scene of a frame, each source of motion in its order.
 fn update_scene(host: &mut AppHost, state: &mut RunState) {
     let two_dimensional = host.showing_two_dimensional();
+    let composite = composite_options(host);
+    tint_scene(host, state, two_dimensional);
     // How far into the emulated frame the display is, for the experimental 120 Hz scrolling.
     let phase = host.pacer.phase_at(state.frame_time);
     let show_band = host
@@ -2765,8 +3236,14 @@ fn update_scene(host: &mut AppHost, state: &mut RunState) {
         .get(SettingId::EmuSmoothScrollView)
         .as_bool();
     state.picture_between = false;
+    // Portrait (owner request): the widescreen is held off while the screen is too narrow.
+    let widescreen_choice = if host.widescreen_held_off() {
+        0
+    } else {
+        host.settings().get(SettingId::VideoWidescreen).as_int()
+    };
     let (widescreen, widescreen_y) = widescreen_margin(
-        host.settings().get(SettingId::VideoWidescreen).as_int(),
+        widescreen_choice,
         host.settings()
             .get(SettingId::VideoWidescreenExtra)
             .as_int(),
@@ -2780,7 +3257,12 @@ fn update_scene(host: &mut AppHost, state: &mut RunState) {
     zax_engine3d::palette::select_nes_palette(
         u8::try_from(host.settings().get(SettingId::VideoNesPalette).as_int()).unwrap_or(0),
     );
+    // And the television they are shown on (lot REWRITE-UI), the 3D scene's as the picture's.
+    zax_engine3d::palette::set_tv_look(tv_look(host.settings()));
     let hack_options = host.hack_option_bits();
+    let scene_scale = host.scene_scale();
+    // `emu.smooth_scroll_3d`: the 3D scene slides as well (owner, 2026-11-20).
+    let smooth_3d = host.settings().get(SettingId::EmuSmoothScroll3d).as_bool();
     // The smooth scrolling from the run-ahead: nothing to draw between two frames at 60 frames a
     // second or less, nor a real frame to slide from without run-ahead; then nothing is done.
     let smooth_ahead = host
@@ -2890,6 +3372,7 @@ fn update_scene(host: &mut AppHost, state: &mut RunState) {
         }
         let in_force = overscan.in_force(i32::try_from(width).map_or(0, |width| (width - 256) / 2));
         in_force.leave_out(&mut state.picture, state.picture_height);
+        colour_picture(state, session, width, composite);
         scene.picture_crop = zax_profiles::values::Vec4F::new(
             in_force.crop()[0],
             in_force.crop()[1],
@@ -2904,6 +3387,23 @@ fn update_scene(host: &mut AppHost, state: &mut RunState) {
         scene.picture_crop = zax_profiles::values::Vec4F::new(crop[0], crop[1], crop[2], crop[3]);
         scene.picture_shift = None;
         scene.picture_overlay.clear();
+        // Experimental (owner request, 2026-11-20): the 3D playfield between two frames too,
+        // from the shift and motion kept with the frame the scene shows.
+        let smooth = session.published_smooth();
+        scene.three_d_shift = match (smooth.shift, smooth.motion) {
+            (Some((shift, start, end)), Some(motion)) if smooth_3d => {
+                #[allow(clippy::cast_possible_truncation)] // 0 to 1.
+                let along = motion * phase as f32;
+                state.picture_between = true;
+                Some(zax_render::scene::ThreeDShift {
+                    amount: (shift + along) * scene_scale,
+                    start,
+                    end,
+                    steady: smooth.steady.clone(),
+                })
+            }
+            _ => None,
+        };
     }
     // REQ-SCN-022: the renderer needs the followed shape to find the occluders.
     scene.followed_shape = session.followed_shape();
@@ -2944,6 +3444,16 @@ fn render_scene(
         draw_list: list,
         nes_picture: picture,
         nes_picture_height: state.picture_height,
+        nes_picture_emphasis: if picture.is_empty() {
+            &[]
+        } else {
+            &state.picture_emphasis
+        },
+        nes_picture_rgb: if picture.is_empty() {
+            &[]
+        } else {
+            &state.picture_rgb
+        },
     };
     draw_scene(
         graphics,
@@ -3006,6 +3516,9 @@ fn forward_events(
         match &event {
             HostEvent::SettingChanged(id) => {
                 pacing.on_setting_changed(window, host.settings(), *id);
+                if *id == SettingId::UiOrientation {
+                    window.set_orientation(orientation_of(host.settings()));
+                }
             }
             // REQ-UI-209: the window state follows ui.fullscreen, whoever flipped it.
             HostEvent::UiRequested {

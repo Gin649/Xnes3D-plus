@@ -1106,6 +1106,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust2"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1d73c59a56771343712b22ea5615092c612c16ba291c0979e3105dfeec4890"
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1905,6 +1911,16 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "sevenz-rust2"
+version = "0.25.0"
+dependencies = [
+ "crc32fast",
+ "js-sys",
+ "lzma-rust2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2785,7 +2801,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "zax-achievements"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "cc",
  "ureq",
@@ -2793,14 +2809,14 @@ dependencies = [
 
 [[package]]
 name = "zax-android"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "zax-app",
 ]
 
 [[package]]
 name = "zax-app"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "glow",
  "imgui",
@@ -2811,6 +2827,7 @@ dependencies = [
  "sdl2",
  "serde",
  "serde_json",
+ "sevenz-rust2",
  "sha1",
  "sys-locale",
  "thiserror 2.0.21",
@@ -2818,7 +2835,9 @@ dependencies = [
  "walkdir",
  "wgpu",
  "zax-achievements",
+ "zax-core-api",
  "zax-engine3d",
+ "zax-fceux",
  "zax-nes",
  "zax-platform",
  "zax-profiles",
@@ -2829,18 +2848,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "zax-core-api"
+version = "0.6.1"
+dependencies = [
+ "zax-nes",
+]
+
+[[package]]
 name = "zax-engine3d"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "rstest",
  "thiserror 2.0.21",
+ "zax-core-api",
  "zax-nes",
  "zax-profiles",
 ]
 
 [[package]]
+name = "zax-fceux"
+version = "0.6.1"
+dependencies = [
+ "zax-core-api",
+]
+
+[[package]]
 name = "zax-goldens"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2848,12 +2882,31 @@ dependencies = [
 
 [[package]]
 name = "zax-harness"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "serde_json",
+ "sha1",
  "sha2",
+ "zax-core-api",
  "zax-engine3d",
+ "zax-fceux",
  "zax-goldens",
+ "zax-nes",
+ "zax-neshawk",
+ "zax-profiles",
+ "zax-render",
+ "zax-scripting",
+ "zax-settings",
+ "zip",
+]
+
+[[package]]
+name = "zax-libretro"
+version = "0.6.1"
+dependencies = [
+ "glow",
+ "png 0.17.16",
+ "zax-engine3d",
  "zax-nes",
  "zax-profiles",
  "zax-render",
@@ -2863,15 +2916,27 @@ dependencies = [
 
 [[package]]
 name = "zax-nes"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
+ "serde_json",
+ "sha1",
  "sha2",
+ "zax-core-api",
  "zax-goldens",
+ "zip",
+]
+
+[[package]]
+name = "zax-neshawk"
+version = "0.6.1"
+dependencies = [
+ "zax-core-api",
+ "zax-nes",
 ]
 
 [[package]]
 name = "zax-platform"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "glow",
  "imgui",
@@ -2886,21 +2951,23 @@ dependencies = [
 
 [[package]]
 name = "zax-profiles"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "getrandom 0.3.4",
  "rstest",
  "serde",
  "serde_json",
+ "sevenz-rust2",
  "sha2",
  "thiserror 2.0.21",
  "time",
  "zax-settings",
+ "zip",
 ]
 
 [[package]]
 name = "zax-render"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "flate2",
  "glow",
@@ -2912,6 +2979,7 @@ dependencies = [
  "thiserror 2.0.21",
  "wgpu",
  "windows-sys 0.61.2",
+ "zax-core-api",
  "zax-engine3d",
  "zax-nes",
  "zax-profiles",
@@ -2920,20 +2988,20 @@ dependencies = [
 
 [[package]]
 name = "zax-scripting"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "getrandom 0.3.4",
  "mlua",
  "thiserror 2.0.21",
+ "zax-core-api",
  "zax-engine3d",
- "zax-nes",
  "zax-profiles",
  "zax-settings",
 ]
 
 [[package]]
 name = "zax-settings"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "rstest",
  "serde_json",

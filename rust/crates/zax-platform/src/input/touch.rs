@@ -22,9 +22,36 @@ pub const TOUCH_PAD_NAME: &str = "Zaxnes touch pad";
 pub fn offered() -> bool {
     static OFFERED: OnceLock<bool> = OnceLock::new();
     *OFFERED.get_or_init(|| {
-        cfg!(target_os = "android") || std::env::var("ZAXNES_TOUCH_PAD").is_ok_and(|v| v == "1")
+        cfg!(any(target_os = "android", target_os = "emscripten"))
+            || std::env::var("ZAXNES_TOUCH_PAD").is_ok_and(|v| v == "1")
     })
 }
+
+/// The gestures of a touch screen without the touch pad: a computer's touch screen, behind
+/// `ZAXNES_TOUCH_GESTURES=1` for now (owner request, off by default): taps and slides in the
+/// console interface, one finger turning the 3D camera and two pinching its zoom in game.
+#[must_use]
+pub fn gestures_only() -> bool {
+    static GESTURES: OnceLock<bool> = OnceLock::new();
+    *GESTURES.get_or_init(|| {
+        !offered() && std::env::var("ZAXNES_TOUCH_GESTURES").is_ok_and(|v| v == "1")
+    })
+}
+
+/// Whether the fingers are followed: the touch pad offered, or its gestures alone.
+#[must_use]
+pub fn fingers_followed() -> bool {
+    offered() || gestures_only()
+}
+
+/// Web build (owner request): with a real gamepad connected, the automatic mode keeps the
+/// buttons a gamepad does not have (the menu, 2D/3D, the camera's lock and recentring, the
+/// rewind and the fast forward) instead of hiding the whole pad.
+const EXTRAS_WITH_GAMEPAD: bool = cfg!(target_os = "emscripten");
+
+/// Web build: Emscripten's SDL has no virtual joysticks, so the pad never makes one; the
+/// application reads its controls instead ([`TouchPad::held`], [`TouchPad::take_commands`]).
+const DIRECT: bool = cfg!(target_os = "emscripten");
 
 /// What the screen shows of the pad: where its controls are, and which are pressed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +60,8 @@ pub struct TouchPadView {
     pressed: [bool; CONTROLS],
     /// The camera does not follow the fingers.
     pub camera_locked: bool,
+    /// Only the buttons a gamepad does not have are shown (a real one is connected).
+    pub extras_only: bool,
 }
 
 impl TouchPadView {
@@ -66,6 +95,31 @@ impl TouchPadMode {
     }
 }
 
+/// The player's settings of the pad: its size and its vibrations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchOptions {
+    /// The size of the controls, 1 the size they were made at (`input.touch_scale`).
+    pub scale: f32,
+    /// The vibration of the cross: 0 none, 1 light, 2 medium, 3 strong
+    /// (`input.touch_haptic_dpad`).
+    pub haptic_dpad: i32,
+    /// The vibration of the buttons, likewise (`input.touch_haptic_buttons`).
+    pub haptic_buttons: i32,
+    /// The rewind and fast-forward buttons are shown (`input.touch_extra`).
+    pub extra: bool,
+}
+
+impl Default for TouchOptions {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            haptic_dpad: 0,
+            haptic_buttons: 0,
+            extra: true,
+        }
+    }
+}
+
 /// A control of the pad.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchControl {
@@ -84,10 +138,14 @@ pub enum TouchControl {
     Recenter,
     /// Locks the camera against the fingers, or frees it; not a button of the controller.
     Lock,
+    /// The rollback while held (owner request); not a button of the controller either.
+    Rewind,
+    /// Fast forward while held, twice or three times faster after a double or triple press.
+    FastForward,
 }
 
 /// How many controls the pad has.
-const CONTROLS: usize = 12;
+const CONTROLS: usize = 14;
 
 impl TouchControl {
     /// The controls, in the order of [`TouchPad::pressed`].
@@ -104,6 +162,8 @@ impl TouchControl {
         Self::Flat,
         Self::Recenter,
         Self::Lock,
+        Self::Rewind,
+        Self::FastForward,
     ];
 
     const fn index(self) -> usize {
@@ -111,7 +171,7 @@ impl TouchControl {
     }
 
     /// The game-controller button it presses: A and B by their labels, as on a handheld. The
-    /// lock presses none.
+    /// lock, the rewind and the fast forward press none.
     const fn button(self) -> Option<sys::SDL_GameControllerButton> {
         use sys::SDL_GameControllerButton as B;
         Some(match self {
@@ -126,7 +186,7 @@ impl TouchControl {
             Self::Menu => B::SDL_CONTROLLER_BUTTON_GUIDE,
             Self::Flat => B::SDL_CONTROLLER_BUTTON_Y,
             Self::Recenter => B::SDL_CONTROLLER_BUTTON_X,
-            Self::Lock => return None,
+            Self::Lock | Self::Rewind | Self::FastForward => return None,
         })
     }
 }
@@ -142,6 +202,22 @@ impl Circle {
     fn contains(&self, point: [f32; 2], scale: f32) -> bool {
         distance(point, self.center) <= self.radius * scale
     }
+
+    /// The circle `scale` times as large, the point `anchor` (a corner or an edge of the view)
+    /// staying where it is: the control keeps to its edge, its gap to it growing with it.
+    fn scaled_from(self, anchor: [f32; 2], scale: f32) -> Self {
+        Self {
+            center: scale_point(self.center, anchor, scale),
+            radius: self.radius * scale,
+        }
+    }
+}
+
+fn scale_point(point: [f32; 2], anchor: [f32; 2], scale: f32) -> [f32; 2] {
+    [
+        anchor[0] + (point[0] - anchor[0]) * scale,
+        anchor[1] + (point[1] - anchor[1]) * scale,
+    ]
 }
 
 /// A rectangular control, in pixels.
@@ -152,6 +228,13 @@ pub struct Rect {
 }
 
 impl Rect {
+    fn scaled_from(self, anchor: [f32; 2], scale: f32) -> Self {
+        Self {
+            min: scale_point(self.min, anchor, scale),
+            max: scale_point(self.max, anchor, scale),
+        }
+    }
+
     fn contains(&self, point: [f32; 2], margin: f32) -> bool {
         point[0] >= self.min[0] - margin
             && point[0] <= self.max[0] + margin
@@ -176,6 +259,10 @@ pub struct TouchLayout {
     pub flat: Circle,
     pub lock: Circle,
     pub recenter: Circle,
+    /// The rewind and the fast forward (owner request): under the 2D/3D switch and the lock, or
+    /// along the top of the band in portrait; none when `input.touch_extra` is off.
+    pub rewind: Option<Circle>,
+    pub forward: Option<Circle>,
 }
 
 /// How far from its drawing a button still takes a finger, as a factor of its radius.
@@ -235,6 +322,157 @@ impl TouchLayout {
                 center: [unit * 0.32, unit * 0.08],
                 radius: unit * 0.045,
             },
+            rewind: Some(Circle {
+                center: [unit * 0.08, unit * 0.2],
+                radius: unit * 0.045,
+            }),
+            forward: Some(Circle {
+                center: [unit * 0.2, unit * 0.2],
+                radius: unit * 0.045,
+            }),
+        }
+    }
+
+    /// The layout on a view of `width` by `height` pixels at `scale` times the size: each control
+    /// grows or shrinks from the corner or the edge of the view it keeps to — the cross from the
+    /// bottom left corner, B and A from the bottom right one, Select and Start from the middle of
+    /// the bottom edge, the menu from the top right corner, the three small buttons from the top
+    /// left one.
+    #[must_use]
+    pub fn scaled(width: f32, height: f32, scale: f32) -> Self {
+        Self::for_view(width, height).scaled_from_edges(width, height, 0.0, scale)
+    }
+
+    /// The layout in portrait (owner request): the game above `top`, the pad in the band under
+    /// it, the whole width. The cross on the left and B and A on the right, half way down the
+    /// band; Select and Start at the bottom in the middle; the menu and the three small buttons
+    /// along the band's top.
+    #[must_use]
+    pub fn for_portrait(width: f32, height: f32, top: f32) -> Self {
+        let band = (height - top).max(1.0);
+        let unit = width.min(band * 1.6);
+        let dpad_radius = unit * 0.15;
+        let button = unit * 0.09;
+        let small = [unit * 0.16, unit * 0.06];
+        let bottom = height - band * 0.05;
+        let middle = top + band * 0.5;
+        let pill = |center_x: f32| Rect {
+            min: [center_x - small[0] * 0.5, bottom - small[1]],
+            max: [center_x + small[0] * 0.5, bottom],
+        };
+        let corner = top + unit * 0.07;
+        let little = unit * 0.045;
+        Self {
+            dpad: Circle {
+                center: [unit * 0.06 + dpad_radius, middle],
+                radius: dpad_radius,
+            },
+            a: Circle {
+                center: [width - unit * 0.11, middle - unit * 0.07],
+                radius: button,
+            },
+            b: Circle {
+                center: [width - unit * 0.3, middle + unit * 0.07],
+                radius: button,
+            },
+            select: pill(width * 0.5 - unit * 0.11),
+            start: pill(width * 0.5 + unit * 0.11),
+            menu: Circle {
+                center: [width - unit * 0.07, corner],
+                radius: little,
+            },
+            flat: Circle {
+                center: [unit * 0.07, corner],
+                radius: little,
+            },
+            lock: Circle {
+                center: [unit * 0.19, corner],
+                radius: little,
+            },
+            recenter: Circle {
+                center: [unit * 0.31, corner],
+                radius: little,
+            },
+            rewind: Some(Circle {
+                center: [width - unit * 0.31, corner],
+                radius: little,
+            }),
+            forward: Some(Circle {
+                center: [width - unit * 0.19, corner],
+                radius: little,
+            }),
+        }
+    }
+
+    /// This layout without the rewind and fast-forward buttons.
+    #[must_use]
+    pub const fn without_extra(self) -> Self {
+        Self {
+            rewind: None,
+            forward: None,
+            ..self
+        }
+    }
+
+    /// This layout without what a gamepad already has (the cross, B and A, Select and Start):
+    /// those controls are moved off the view, where no finger reaches them.
+    #[must_use]
+    pub const fn without_gamepad_controls(self) -> Self {
+        const AWAY: f32 = -1.0e6;
+        let gone = Circle {
+            center: [AWAY, AWAY],
+            radius: 0.0,
+        };
+        let none = Rect {
+            min: [AWAY, AWAY],
+            max: [AWAY, AWAY],
+        };
+        Self {
+            dpad: gone,
+            a: gone,
+            b: gone,
+            select: none,
+            start: none,
+            ..self
+        }
+    }
+
+    /// [`Self::for_portrait`] at `scale` times the size, each control keeping to its corner or
+    /// edge of the band, as [`Self::scaled`] does on the whole screen.
+    #[must_use]
+    pub fn scaled_portrait(width: f32, height: f32, top: f32, scale: f32) -> Self {
+        Self::for_portrait(width, height, top).scaled_from_edges(width, height, top, scale)
+    }
+
+    /// This layout `scale` times as large, each control growing from the corner or the edge of
+    /// the area from `top` to `height` it keeps to.
+    fn scaled_from_edges(self, width: f32, height: f32, top: f32, scale: f32) -> Self {
+        let base = self;
+        let scale = scale.clamp(0.25, 3.0);
+        let (top_left, top_right) = ([0.0, top], [width, top]);
+        let (bottom_left, bottom_right) = ([0.0, height], [width, height]);
+        let bottom_middle = [width * 0.5, height];
+        // The rewind and the fast forward keep to the top corner of their half.
+        let top_corner = |circle: Circle| {
+            let anchor = if circle.center[0] < width * 0.5 {
+                top_left
+            } else {
+                top_right
+            };
+            circle.scaled_from(anchor, scale)
+        };
+        Self {
+            dpad: base.dpad.scaled_from(bottom_left, scale),
+            a: base.a.scaled_from(bottom_right, scale),
+            b: base.b.scaled_from(bottom_right, scale),
+            select: base.select.scaled_from(bottom_middle, scale),
+            start: base.start.scaled_from(bottom_middle, scale),
+            menu: base.menu.scaled_from(top_right, scale),
+            flat: base.flat.scaled_from(top_left, scale),
+            lock: base.lock.scaled_from(top_left, scale),
+            recenter: base.recenter.scaled_from(top_left, scale),
+            rewind: base.rewind.map(top_corner),
+            forward: base.forward.map(top_corner),
         }
     }
 
@@ -276,6 +514,16 @@ impl TouchLayout {
             Some(TouchControl::Lock)
         } else if self.recenter.contains(point, 1.3) {
             Some(TouchControl::Recenter)
+        } else if self
+            .rewind
+            .is_some_and(|circle| circle.contains(point, 1.3))
+        {
+            Some(TouchControl::Rewind)
+        } else if self
+            .forward
+            .is_some_and(|circle| circle.contains(point, 1.3))
+        {
+            Some(TouchControl::FastForward)
         } else {
             None
         }
@@ -418,6 +666,17 @@ pub struct TouchPad {
     mouse_finger: bool,
     /// Where free fingers tapped since the last [`TouchPad::take_taps`], in drawable pixels.
     taps: Vec<[f32; 2]>,
+    /// The commands the buttons pressed while only the extras are shown (no virtual
+    /// controller carries them), since the last [`TouchPad::take_commands`].
+    commands: Vec<&'static str>,
+    /// The controls pressed since the application last read them ([`TouchPad::take_held`]): a
+    /// quick tap (a mouse click) may go down and up between two frames and must still count.
+    latched: [bool; CONTROLS],
+    options: TouchOptions,
+    /// In portrait, where the pad's band starts.
+    pad_top: Option<f32>,
+    /// The device's vibrator, opened at the first vibration asked for.
+    vibrator: Vibrator,
 }
 
 /// The finger the mouse stands for.
@@ -445,6 +704,11 @@ impl TouchPad {
             name: CString::new(TOUCH_PAD_NAME).unwrap_or_default(),
             mouse_finger,
             taps: Vec::new(),
+            commands: Vec::new(),
+            latched: [false; CONTROLS],
+            options: TouchOptions::default(),
+            pad_top: None,
+            vibrator: Vibrator::default(),
         }
     }
 
@@ -459,21 +723,105 @@ impl TouchPad {
             }
     }
 
+    /// Whether only the buttons a gamepad lacks are shown: the web build's automatic mode with a
+    /// real gamepad connected, in game.
+    #[must_use]
+    pub fn extras_only(&self) -> bool {
+        EXTRAS_WITH_GAMEPAD
+            && self.playing
+            && self.mode == TouchPadMode::Auto
+            && self.physical
+            && self.view[1] > 0.0
+    }
+
+    /// Whether the whole pad is shown with no virtual controller behind it: the web build, whose
+    /// SDL has no virtual joysticks. Its controls are then read by [`TouchPad::held`].
+    fn direct(&self) -> bool {
+        DIRECT && self.shown() && self.view[1] > 0.0
+    }
+
+    /// Whether some of the pad is on the screen and takes fingers.
+    fn active(&self) -> bool {
+        !self.joystick.is_null() || self.direct() || self.extras_only()
+    }
+
+    /// Whether the pad's buttons are read by the application rather than pressed on a virtual
+    /// controller.
+    fn read_directly(&self) -> bool {
+        self.joystick.is_null() && self.active()
+    }
+
+    /// Whether only the extras are on the screen now.
+    fn showing_extras_only(&self) -> bool {
+        self.active() && !self.shown()
+    }
+
+    /// The controls fingers can press now.
+    fn active_layout(&self) -> TouchLayout {
+        if self.showing_extras_only() {
+            self.layout.without_gamepad_controls()
+        } else {
+            self.layout
+        }
+    }
+
     /// What to draw of the pad; none while it is hidden.
     #[must_use]
     pub fn view(&self) -> Option<TouchPadView> {
-        (!self.joystick.is_null()).then_some(TouchPadView {
-            layout: self.layout,
+        self.active().then(|| TouchPadView {
+            layout: self.active_layout(),
             pressed: self.pressed,
             camera_locked: self.camera_locked,
+            extras_only: self.showing_extras_only(),
         })
+    }
+
+    /// Whether `control` is held, for the application to act on it itself: only while no
+    /// virtual controller carries the pad's buttons (the web build).
+    #[must_use]
+    pub fn held(&self, control: TouchControl) -> bool {
+        self.read_directly() && self.pressed[control.index()]
+    }
+
+    /// [`TouchPad::held`], or pressed at all since the last call: what the application reads
+    /// once a frame, so that a tap shorter than a frame is not lost.
+    pub fn take_held(&mut self, control: TouchControl) -> bool {
+        let latched = std::mem::take(&mut self.latched[control.index()]);
+        self.read_directly() && (latched || self.pressed[control.index()])
+    }
+
+    /// The commands the extras pressed since the last call (`video.toggle_2d`,
+    /// `video.reset_view`).
+    pub fn take_commands(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.commands)
+    }
+
+    /// Whether the pad's rewind and fast-forward buttons are held: the hotkeys they stand for
+    /// (owner request).
+    #[must_use]
+    pub fn hotkeys_held(&self) -> (bool, bool) {
+        if !self.active() {
+            return (false, false);
+        }
+        (
+            self.pressed[TouchControl::Rewind.index()],
+            self.pressed[TouchControl::FastForward.index()],
+        )
     }
 
     /// Whether this pad's fingers stand for the mouse's drag and wheel on the camera: on a touch
     /// screen, not on a desktop trying the pad with the mouse.
     #[must_use]
     pub const fn drives_pointer(&self) -> bool {
-        !self.mouse_finger
+        // The web build takes both: real fingers on a touch screen, the mouse on a computer.
+        !self.mouse_finger || DIRECT
+    }
+
+    /// Whether the mouse belongs to the pad alone: on the web, in game, it is a finger like the
+    /// others, so its drag turns the camera only when the lock lets fingers do it.
+    #[must_use]
+    pub fn holds_mouse(&self) -> bool {
+        DIRECT && self.mouse_finger && self.active()
     }
 
     /// The one free finger turning the camera, like a mouse drag; none while the camera is
@@ -491,7 +839,7 @@ impl TouchPad {
 
     /// The camera follows free fingers in game, unless the shown pad locks it.
     fn camera_free(&self) -> bool {
-        self.playing && (self.joystick.is_null() || !self.camera_locked)
+        self.playing && (!self.active() || !self.camera_locked)
     }
 
     /// One free finger turns the camera; two pinch its zoom.
@@ -520,6 +868,12 @@ impl TouchPad {
         std::mem::take(&mut self.taps)
     }
 
+    /// Where the first free finger is, in drawable pixels: what drags the scrollbar of a menu.
+    #[must_use]
+    pub fn free_point(&self) -> Option<[f32; 2]> {
+        self.fingers.free_points().first().copied()
+    }
+
     /// How far fingers off the pad slid down since the last call, in drawable pixels (up is
     /// negative): the scroll of a menu.
     pub fn take_scroll(&mut self) -> f32 {
@@ -529,15 +883,23 @@ impl TouchPad {
     /// Takes the mode of the setting, whether a game is on the screen, and the sizes of the
     /// window and of its drawable, for this frame; the pad is laid out and drawn in drawable
     /// pixels.
+    ///
+    /// `pad_top`, in portrait, is where the game's view ends and the pad's band starts.
     pub fn update(
         &mut self,
         mode: TouchPadMode,
+        options: TouchOptions,
         playing: bool,
         window: [f32; 2],
         drawable: [f32; 2],
+        pad_top: Option<f32>,
     ) {
         self.mode = mode;
         self.playing = playing;
+        // Compared exactly: another size or the extra buttons lay the pad out again.
+        let rescaled = options != self.options || pad_top != self.pad_top;
+        self.pad_top = pad_top;
+        self.options = options;
         let [width, height] = drawable;
         if window[0] > 0.0 && window[1] > 0.0 {
             self.scale = [width / window[0], height / window[1]];
@@ -545,9 +907,15 @@ impl TouchPad {
         // The window's own sizes, compared exactly: a new size lays the pad out again.
         #[allow(clippy::float_cmp)]
         let resized = self.view != [width, height];
-        if resized {
+        if resized || rescaled {
             self.view = [width, height];
-            self.layout = TouchLayout::for_view(width, height);
+            self.layout = match pad_top {
+                Some(top) => TouchLayout::scaled_portrait(width, height, top, self.options.scale),
+                None => TouchLayout::scaled(width, height, self.options.scale),
+            };
+            if !self.options.extra {
+                self.layout = self.layout.without_extra();
+            }
         }
         self.follow_visibility();
     }
@@ -555,7 +923,8 @@ impl TouchPad {
     /// Takes one SDL event: the fingers, and the gamepads plugged or unplugged.
     pub fn handle_event(&mut self, event: &Event) {
         let (view, scale) = (self.view, self.scale);
-        let pad = (!self.joystick.is_null()).then_some(&self.layout);
+        let layout = self.active_layout();
+        let pad = self.active().then_some(&layout);
         // How far a tap may slide: a little of the view's height.
         let slop = view[1] * 0.03;
         let at = |x: f32, y: f32| [x * view[0], y * view[1]];
@@ -590,19 +959,23 @@ impl TouchPad {
             }
             _ => return,
         }
-        self.press(self.fingers.pressed(&self.layout));
+        self.press(self.fingers.pressed(&layout));
         self.follow_camera_fingers();
     }
 
     /// Attaches the virtual controller when the pad appears, detaches it when it goes.
     fn follow_visibility(&mut self) {
-        let shown = self.shown() && self.view[1] > 0.0;
+        let shown = self.shown() && self.view[1] > 0.0 && !DIRECT;
         if shown && self.joystick.is_null() {
             self.attach();
         } else if !shown && !self.joystick.is_null() {
             self.fingers = Fingers::default();
             self.press([false; CONTROLS]);
             self.detach();
+        } else if !self.active() && self.pressed.iter().any(|on| *on) {
+            // The extras went away (no game, or the gamepad unplugged into the full pad).
+            self.fingers = Fingers::default();
+            self.pressed = [false; CONTROLS];
         }
         if !self.camera_free() {
             self.camera_finger = None;
@@ -611,9 +984,16 @@ impl TouchPad {
     }
 
     fn press(&mut self, pressed: [bool; CONTROLS]) {
-        if self.joystick.is_null() {
+        if !self.active() {
             self.pressed = [false; CONTROLS];
             return;
+        }
+        let (dpad, buttons) = new_presses(&self.pressed, &pressed);
+        if dpad {
+            self.vibrator.pulse(self.options.haptic_dpad);
+        }
+        if buttons {
+            self.vibrator.pulse(self.options.haptic_buttons);
         }
         for control in TouchControl::ALL {
             let on = pressed[control.index()];
@@ -622,12 +1002,26 @@ impl TouchPad {
             }
             match control.button() {
                 // SAFETY: the joystick is the open virtual controller of this pad.
-                Some(button) => unsafe {
+                Some(button) if !self.joystick.is_null() => unsafe {
                     sys::SDL_JoystickSetVirtualButton(self.joystick, button as i32, u8::from(on));
                 },
-                None if on => self.camera_locked = !self.camera_locked,
+                // The extras alone, with no virtual controller: the commands its buttons stand
+                // for in game (the menu is a held hotkey, see `menu_held`).
+                Some(_) if on && control == TouchControl::Flat => {
+                    self.commands.push("video.toggle_2d");
+                }
+                Some(_) if on && control == TouchControl::Recenter => {
+                    self.commands.push("video.reset_view");
+                }
+                Some(_) => {}
+                None if on && control == TouchControl::Lock => {
+                    self.camera_locked = !self.camera_locked;
+                }
                 None => {}
             }
+        }
+        for (latched, on) in self.latched.iter_mut().zip(pressed) {
+            *latched |= on;
         }
         self.pressed = pressed;
     }
@@ -674,6 +1068,79 @@ impl Drop for TouchPad {
         if !self.joystick.is_null() {
             self.detach();
         }
+    }
+}
+
+/// What a change of the pressed controls from `before` to `after` asks to vibrate: the cross
+/// (another direction pressed, a diagonal included) and the buttons (one more pressed).
+fn new_presses(before: &[bool; CONTROLS], after: &[bool; CONTROLS]) -> (bool, bool) {
+    let directions = 4;
+    let dpad =
+        after[..directions].iter().any(|on| *on) && after[..directions] != before[..directions];
+    let buttons = (directions..CONTROLS).any(|index| after[index] && !before[index]);
+    (dpad, buttons)
+}
+
+/// The vibration of a level: its strength (0 to 1) and how long it lasts, in milliseconds.
+const fn pulse_of(level: i32) -> Option<(f32, u32)> {
+    match level {
+        1 => Some((0.35, 12)),
+        2 => Some((0.65, 20)),
+        3 => Some((1.0, 30)),
+        _ => None,
+    }
+}
+
+/// The device's vibrator: SDL's first haptic device, which on Android is the phone's or the
+/// tablet's own (SDL calls it `VIBRATOR_SERVICE`). Opened once, at the first pulse; none on a
+/// device without one.
+#[derive(Debug, Default)]
+struct Vibrator {
+    haptic: Option<*mut sys::SDL_Haptic>,
+}
+
+impl Vibrator {
+    /// A short pulse at `level` (0 none, 1 light, 2 medium, 3 strong).
+    fn pulse(&mut self, level: i32) {
+        let Some((strength, length)) = pulse_of(level) else {
+            return;
+        };
+        let haptic = *self.haptic.get_or_insert_with(open_vibrator);
+        if haptic.is_null() {
+            return;
+        }
+        // SAFETY: an open haptic device whose rumble was initialised.
+        unsafe {
+            sys::SDL_HapticRumblePlay(haptic, strength, length);
+        }
+    }
+}
+
+impl Drop for Vibrator {
+    fn drop(&mut self) {
+        if let Some(haptic) = self.haptic.filter(|haptic| !haptic.is_null()) {
+            // SAFETY: the device this vibrator opened, closed once.
+            unsafe { sys::SDL_HapticClose(haptic) };
+        }
+    }
+}
+
+/// Opens the first haptic device for rumbling; null when there is none or it cannot rumble.
+fn open_vibrator() -> *mut sys::SDL_Haptic {
+    // SAFETY: SDL's haptic subsystem, started then queried; the device is closed by `Vibrator`.
+    unsafe {
+        if sys::SDL_InitSubSystem(sys::SDL_INIT_HAPTIC) != 0 || sys::SDL_NumHaptics() < 1 {
+            return ptr::null_mut();
+        }
+        let haptic = sys::SDL_HapticOpen(0);
+        if haptic.is_null() {
+            return haptic;
+        }
+        if sys::SDL_HapticRumbleInit(haptic) != 0 {
+            sys::SDL_HapticClose(haptic);
+            return ptr::null_mut();
+        }
+        haptic
     }
 }
 
@@ -789,6 +1256,121 @@ mod tests {
         );
         assert_eq!(None, layout.button_at([960.0, 400.0]));
         assert!(layout.select.max[0] < layout.start.min[0]);
+        // The rewind and fast forward, under the 2D/3D switch and the lock (owner request).
+        let (rewind, forward) = (layout.rewind.unwrap(), layout.forward.unwrap());
+        assert_eq!(Some(TouchControl::Rewind), layout.button_at(rewind.center));
+        assert_eq!(
+            Some(TouchControl::FastForward),
+            layout.button_at(forward.center)
+        );
+        assert!(rewind.center[1] > layout.flat.center[1]);
+        assert!((rewind.center[0] - layout.flat.center[0]).abs() < 1e-3);
+        assert!((forward.center[0] - layout.lock.center[0]).abs() < 1e-3);
+        let bare = layout.without_extra();
+        assert_eq!(None, bare.button_at(rewind.center));
+        assert_eq!(None, bare.button_at(forward.center));
+    }
+
+    #[test]
+    fn a_larger_pad_keeps_each_control_to_its_corner() {
+        let (width, height) = (1920.0, 1080.0);
+        let normal = TouchLayout::scaled(width, height, 1.0);
+        assert_eq!(normal, layout());
+        let large = TouchLayout::scaled(width, height, 1.5);
+        // The cross grows from the bottom left corner: its gaps to both edges grow with it.
+        let gap = |circle: Circle| {
+            [
+                circle.center[0] - circle.radius,
+                height - circle.center[1] - circle.radius,
+            ]
+        };
+        let (before, after) = (gap(normal.dpad), gap(large.dpad));
+        assert!((after[0] - before[0] * 1.5).abs() < 1e-3);
+        assert!((after[1] - before[1] * 1.5).abs() < 1e-3);
+        assert!((large.dpad.radius - normal.dpad.radius * 1.5).abs() < 1e-3);
+        // A from the bottom right one, the menu from the top right, Select from the bottom middle.
+        assert!(large.a.center[0] < normal.a.center[0] && large.a.center[1] < normal.a.center[1]);
+        assert!(large.menu.center[0] < normal.menu.center[0]);
+        assert!(large.menu.center[1] > normal.menu.center[1]);
+        assert!(large.select.min[0] < normal.select.min[0]);
+        assert!((large.select.max[1] - height).abs() > (normal.select.max[1] - height).abs());
+        // Smaller, the other way; and the pad still answers where it is drawn.
+        let small = TouchLayout::scaled(width, height, 0.6);
+        assert!(small.dpad.center[1] > normal.dpad.center[1]);
+        assert_eq!(Some(TouchControl::A), small.button_at(small.a.center));
+        assert_eq!(Some(TouchControl::B), large.button_at(large.b.center));
+    }
+
+    #[test]
+    fn in_portrait_the_pad_keeps_to_the_band_under_the_game() {
+        let (width, height) = (1080.0, 2340.0);
+        let top = 810.0;
+        let layout = TouchLayout::for_portrait(width, height, top);
+        let circles = [
+            layout.dpad,
+            layout.a,
+            layout.b,
+            layout.menu,
+            layout.flat,
+            layout.lock,
+            layout.recenter,
+            layout.rewind.unwrap(),
+            layout.forward.unwrap(),
+        ];
+        for circle in circles {
+            assert!(
+                circle.center[1] - circle.radius >= top,
+                "{circle:?} over the game"
+            );
+            assert!(circle.center[1] + circle.radius <= height);
+            assert!(circle.center[0] - circle.radius >= 0.0);
+            assert!(circle.center[0] + circle.radius <= width);
+        }
+        assert!(layout.select.min[1] > top && layout.start.max[1] <= height);
+        assert!(layout.dpad.center[0] < width * 0.5 && layout.a.center[0] > width * 0.5);
+        // Every control answers where it is drawn, and the game's view answers nothing.
+        for (control, point) in [
+            (TouchControl::A, layout.a.center),
+            (TouchControl::B, layout.b.center),
+            (TouchControl::Menu, layout.menu.center),
+            (TouchControl::Flat, layout.flat.center),
+            (TouchControl::Lock, layout.lock.center),
+            (TouchControl::Recenter, layout.recenter.center),
+            (TouchControl::Rewind, layout.rewind.unwrap().center),
+            (TouchControl::FastForward, layout.forward.unwrap().center),
+        ] {
+            assert_eq!(Some(control), layout.button_at(point));
+        }
+        // They keep clear of the menu.
+        assert!(
+            layout.forward.unwrap().center[0] < layout.menu.center[0] - layout.menu.radius * 2.0
+        );
+        assert_eq!(None, layout.button_at([width * 0.5, top * 0.5]));
+        assert!(!layout.takes_dpad([width * 0.5, top * 0.5]));
+        // Larger, the small buttons stay on the band's top edge.
+        let large = TouchLayout::scaled_portrait(width, height, top, 1.4);
+        assert!(large.flat.center[1] - large.flat.radius >= top);
+        assert!(large.dpad.radius > layout.dpad.radius);
+    }
+
+    #[test]
+    fn a_new_press_vibrates_its_part_of_the_pad() {
+        let mut before = [false; CONTROLS];
+        let mut after = before;
+        after[TouchControl::Up.index()] = true;
+        assert_eq!((true, false), new_presses(&before, &after));
+        before = after;
+        // Held: nothing more; a diagonal is a new direction.
+        assert_eq!((false, false), new_presses(&before, &after));
+        after[TouchControl::Right.index()] = true;
+        assert_eq!((true, false), new_presses(&before, &after));
+        before = after;
+        after[TouchControl::A.index()] = true;
+        assert_eq!((false, true), new_presses(&before, &after));
+        // Letting go vibrates nothing.
+        assert_eq!((false, false), new_presses(&after, &[false; CONTROLS]));
+        assert_eq!(None, pulse_of(0));
+        assert!(pulse_of(3).is_some_and(|(strength, _)| (strength - 1.0).abs() < 1e-6));
     }
 
     #[test]

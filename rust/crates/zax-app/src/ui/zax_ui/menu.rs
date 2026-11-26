@@ -128,6 +128,12 @@ impl ZaxUi {
                         draw_aids(ui, host, aids);
                     }
                 }
+                GameRow::ResetSmart3d => {
+                    ui.separator();
+                    if ui.menu_item(strings::get(keys::HANDHELD_GAME_OPTIONS_RESET_SMART3D)) {
+                        host.forget_smart3d(path);
+                    }
+                }
                 GameRow::Option(OptionRow::Page(page)) => {
                     ui.separator();
                     changed |= draw_game_page(ui, host, &mut model, *page);
@@ -353,7 +359,14 @@ fn draw_items(ui: &Ui, items: &[MenuItem], host: &AppHost) -> Option<Chosen> {
         }
         let _id = ui.push_id_usize(index);
         if let Some(submenu) = item.submenu {
-            if let Some(_menu) = ui.begin_menu(&item.label) {
+            let menu = ui.begin_menu(&item.label);
+            // A submenu whose title runs a command when clicked (lot REWRITE-UI).
+            if let Some(command) = item.ui_command {
+                if ui.is_item_clicked() {
+                    chosen = chosen.or(Some(Chosen::Ui(command)));
+                }
+            }
+            if let Some(_menu) = menu {
                 let children = MenuBarModel::children(submenu, host);
                 chosen = chosen.or(draw_items(ui, &children, host));
             }

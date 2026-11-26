@@ -36,7 +36,7 @@ pub fn definitions() -> Vec<Value> {
             seek under way, share explored), pause state and whether the scripts drive the core.",
             "inputSchema": empty }),
         json!({ "name": "open_movie", "description": "Plays a movie from its start: an FCEUX .fm2 \
-            or FCE Ultra .fcm (from power on) or a Zaxnes movie (.mv<n>). A game must be running.",
+            or FCE Ultra .fcm (from power on), a BizHawk .bk2 or a Zaxnes movie (.mv<n>). A game must \n            be running. An .fm2 plays on the FCEUX engine, the one it stays in sync on, for that \n            playback alone; a .bk2 plays on the game's own engine and may drift: the game's \n            own engine setting is unchanged and comes back at the next load.",
             "inputSchema": { "type": "object", "properties": {
                 "path": { "type": "string", "description": "The movie file" } },
                 "required": ["path"] } }),

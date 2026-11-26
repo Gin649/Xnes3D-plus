@@ -9,6 +9,13 @@ name: Android APK
 # its profiles and saves. That key is only for this personal fork.
 on:
   workflow_dispatch:
+    inputs:
+      test_build:
+        # Xnes3D+: a test build makes the APK and keeps it on the run's page only (Artifacts),
+        # with no version check and no release, so nobody is offered it as an update.
+        description: 'Test build (no release, APK only in the run artifacts)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write # to publish the APK as a release
@@ -23,6 +30,7 @@ jobs:
       # Xnes3D+: each build is a release named after .github/fork/VERSION. Stop at once, before
       # the long build, when that version was already released: raise the version first.
       - name: The version is new
+        if: ${{ !inputs.test_build }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -78,12 +86,8 @@ jobs:
           [ -f FlappyZaxNes.nes ] || : > FlappyZaxNes.nes
           [ -f flappyzaxnes.3dn ] || : > flappyzaxnes.3dn
 
-      - name: The 3D profiles made for Zaxnes (nixxou/zaxnes_3dn, CC BY-NC-ND 4.0)
-        # build.rs puts the .3dn files of this folder in the app, which copies them into the
-        # profiles at the first start, as the official builds do.
-        run: |
-          git clone --depth 1 https://github.com/nixxou/zaxnes_3dn "$RUNNER_TEMP/zaxnes_3dn"
-          echo "ZAXNES_3DN_DIR=$RUNNER_TEMP/zaxnes_3dn" >> "$GITHUB_ENV"
+      # Xnes3D+: the 3D profiles made for Zaxnes are in the repository now (rust/profiles,
+      # see zax-app's build.rs), so nothing is downloaded for them.
 
       - name: Build the APK
         working-directory: rust
@@ -98,10 +102,11 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Zaxnes-android-fork
+          name: ${{ inputs.test_build && format('Xnes3D-plus-test-{0}', github.ref_name) || 'Zaxnes-android-fork' }}
           path: rust/target-android/package/*.apk
 
       - name: Publish it as a release
+        if: ${{ !inputs.test_build }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

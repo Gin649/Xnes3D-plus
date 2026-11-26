@@ -72,6 +72,13 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         )
     }
 
+    /// Xnes3D+: the ROM of the game the resume point holds, so the Resume row can show its box
+    /// art (owner request).
+    #[must_use]
+    pub fn resume_rom_path(&self) -> Option<String> {
+        self.games.rom_path(&self.resume.as_ref()?.game_id)
+    }
+
     /// The thumbnail file of the resume point, or none when there is none to show
     /// (REQ-LOOP-076, « portant sa vignette »).
     #[must_use]
@@ -168,18 +175,6 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
 
     // --------------------------------------------- favourites and search (REQ-UI-210, REQ-UI-211)
 
-    /// Whether the enumeration of the games keeps only the favourites
-    /// (`library.filter_favorites`).
-    #[must_use]
-    pub const fn favorites_only(&self) -> bool {
-        self.favorites_only
-    }
-
-    /// Ticks or unticks the favourites filter.
-    pub fn set_favorites_only(&mut self, favorites_only: bool) {
-        self.favorites_only = favorites_only;
-    }
-
     /// The text typed in the search of the enumeration of the games (`library.search`).
     #[must_use]
     pub fn library_search(&self) -> &str {
@@ -191,14 +186,15 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         text.clone_into(&mut self.library_search);
     }
 
-    /// Whether `game_id` is marked as a favourite (REQ-UI-210).
+    /// Whether `game_id` is marked as a favourite (REQ-UI-210). Xnes3D+: kept for the game list,
+    /// though Zaxnes 0.6 took favourites out.
     #[must_use]
     pub fn is_favorite(&self, game_id: &str) -> bool {
         self.games.is_favorite(game_id)
     }
 
-    /// Flips the favourite mark of `game_id` and persists it (`favorite.toggle`); returns its new
-    /// value, or none when the game does not exist.
+    /// Flips the favourite mark of `game_id` and persists it; returns its new value, or none
+    /// when the game does not exist.
     pub fn toggle_favorite(&mut self, game_id: &str) -> Option<bool> {
         self.games.toggle_favorite(game_id)
     }

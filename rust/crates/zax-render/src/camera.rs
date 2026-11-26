@@ -181,6 +181,10 @@ impl CameraView {
 /// being smoothed while the game is paused — only the scene stops being drawn (REQ-SCN-047).
 /// FPV target tracking and the occlusion transparency of REQ-SCN-022 belong to the Lua layer
 /// and the host; this type only holds the state and the geometry.
+/// How far behind the 2D picture's distance the view reset puts the camera with
+/// `camera.frame_picture`: two tiles, the depth most profiles' blocks stand out by.
+pub const FRAME_DEPTH_ROOM: f32 = 16.0;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneCamera {
     setpoints: [CameraSetpoint; 2],
@@ -198,6 +202,11 @@ pub struct SceneCamera {
     /// The local camera profile setting (REQ-SCN-009): the rotation becomes `R_Z(ry) · R_X(rx)`
     /// and the camera no longer aims at `P*`.
     pub local_camera: bool,
+    /// `camera.frame_picture` (owner request, 2026-11-19): with the clipping the game shows, the
+    /// view reset frames the picture's visible rows as the head-on 2D view does
+    /// ([`Self::picture_view`]), so going from 2D to 3D does not draw back. `None`: the
+    /// framing of 3dSen (AMD-045 REQ-SCN-069), the NES picture over about 90 % of the height.
+    pub frame_picture: Option<Vec4F>,
     distance_filter: CriticalSmoothing,
     rx_filter: CriticalSmoothing,
     ry_filter: CriticalSmoothing,
@@ -228,6 +237,7 @@ impl SceneCamera {
             transition_remaining: 0.0,
             smooth_time: CriticalSmoothing::DEFAULT_SMOOTH_TIME,
             local_camera: false,
+            frame_picture: None,
             distance_filter: CriticalSmoothing::default(),
             rx_filter: CriticalSmoothing::default(),
             ry_filter: CriticalSmoothing::default(),
@@ -345,12 +355,24 @@ impl SceneCamera {
     /// asks (REQ-SCN-011). The unbounded value is [`SceneCamera::reset_distance`], what
     /// `Camera.ResetDistance` reads (AMD-040 REQ-LUA-113).
     pub fn reset_view(&mut self) {
+        let distance = self.reset_distance();
+        self.reset_view_at(distance);
+    }
+
+    /// The view reset of a script (`Camera.ResetView`): always 3dSen's framing (AMD-045
+    /// REQ-SCN-069), whatever `camera.frame_picture` says, so that a profile's staging is the
+    /// one it was written for. Only the application's own resets follow that setting.
+    pub fn reset_view_as_three_d_sen(&mut self) {
+        let distance = geometry::reset_distance(self.fov);
+        self.reset_view_at(distance);
+    }
+
+    fn reset_view_at(&mut self, distance: f32) {
         for setpoint in &mut self.setpoints {
             setpoint.angles = geometry::DEFAULT_ANGLES;
             setpoint.target = geometry::CENTER;
         }
 
-        let distance = self.reset_distance();
         self.current_mut().set_distance(distance);
     }
 
@@ -358,9 +380,16 @@ impl SceneCamera {
     /// **before** the bound of REQ-SCN-011 (AMD-045 REQ-SCN-069). It follows every change of
     /// field of view, even without a reset, which is what `Camera.ResetDistance` exposes to Lua
     /// (AMD-040 REQ-LUA-113).
+    ///
+    /// With [`Self::frame_picture`], the distance of the head-on 2D view instead.
     #[must_use]
     pub fn reset_distance(&self) -> f32 {
-        geometry::reset_distance(self.fov)
+        match self.frame_picture {
+            // Drawn back by the depth the blocks stand out from the picture, whose front faces
+            // would otherwise overflow its edges (owner, 2026-11-20).
+            Some(clipping) => self.picture_framing(clipping).1 + FRAME_DEPTH_ROOM,
+            None => geometry::reset_distance(self.fov),
+        }
     }
 
     /// The head-on view of the 2D picture (Rust-only, owner request: the "2D from the front" of

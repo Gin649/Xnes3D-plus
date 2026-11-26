@@ -84,8 +84,20 @@ def build_libraries(sdk, ndk):
         'CFLAGS_aarch64_linux_android':
             '-include ' + os.path.join(ANDROID, 'sdl-ndk27.h').replace('\\', '/'),
     })
+    # The FCEUX engine is built in (owner decision, 2026-11-12), from the fork built with the NDK
+    # (`zax\build-android.cmd` in the fork, whose root ZAX_FCEUX_DIR names).
+    # Xnes3D+: the fceux-zax fork is not public, so the Xnes3D+ build has no FCEUX engine when
+    # ZAX_FCEUX_DIR is not set. A game set to FCEUX then plays on the Zaxnes engine (zax-app
+    # falls back to it on its own).
+    fceux = os.environ.get('ZAX_FCEUX_DIR')
+    features = []
+    if fceux:
+        env.setdefault('ZAX_FCEUX_LIB', os.path.join(fceux, 'build-android'))
+        features = ['--features', 'zax-app/fceux-core']
+    else:
+        print('ZAX_FCEUX_DIR is not set: building without the FCEUX engine')
     run(['cargo', 'ndk', '-t', ABI, '-P', str(MIN_SDK), 'build', '--release', '-p',
-         'zax-android'], cwd=RUST, env=env)
+         'zax-android'] + features, cwd=RUST, env=env)
     out = os.path.join(TARGET, TRIPLE, 'release')
     # The C++ runtime of the slang shaders (glslang, through librashader): libmain.so needs it
     # at start-up, and the NDK's shared one is the one Android's loader finds in the APK.

@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use zax_app::ui::handheld::game_options::{self, GameRow};
-use zax_app::ui::handheld::options::{OptionRow, OptionsPage, ROWS, TOUCH_ROWS};
+use zax_app::ui::handheld::options::{OptionRow, OptionsPage, ROWS, SIMPLE_ROWS, TOUCH_ROWS};
 use zax_app::ui::handheld::{advanced, overscan};
 use zax_settings::catalogue::SettingId;
 
@@ -18,7 +18,9 @@ use zax_settings::catalogue::SettingId;
 /// settings-file key, every other row a name of its own that no translation can move.
 fn row_key(row: OptionRow) -> String {
     match row {
-        OptionRow::Setting(id) => id.key().into_owned(),
+        OptionRow::Setting(id) | OptionRow::Choice(id) | OptionRow::Switch(id) => {
+            id.key().into_owned()
+        }
         OptionRow::Group(key) => format!("[{key}]"),
         OptionRow::Page(page) => format!("page.{}", page_name(page)),
         OptionRow::Language => "row.language".to_owned(),
@@ -47,6 +49,15 @@ fn row_key(row: OptionRow) -> String {
         OptionRow::ShaderPreFilter(slot) => {
             format!("row.shader_pre_filter.{}", slot.ids().preset.key())
         }
+        OptionRow::ShaderOption(slot, index) => {
+            format!("row.shader_option.{}.{index}", slot.ids().preset.key())
+        }
+        OptionRow::Mode => "row.mode".to_owned(),
+        OptionRow::Preset => "row.preset".to_owned(),
+        OptionRow::WidescreenOn => "row.widescreen_on".to_owned(),
+        OptionRow::Signal => "row.signal".to_owned(),
+        OptionRow::HackDefault(key) => format!("row.hack_default.{key}"),
+        OptionRow::Reset => "row.reset".to_owned(),
     }
 }
 
@@ -65,6 +76,15 @@ fn page_name(page: OptionsPage) -> &'static str {
         OptionsPage::Audio => "audio",
         OptionsPage::Shaders => "shaders",
         OptionsPage::Library => "library",
+        OptionsPage::Touch => "touch",
+        OptionsPage::PresetOptions => "preset_options",
+        OptionsPage::Widescreen => "widescreen",
+        OptionsPage::SimpleDisplay => "simple_display",
+        OptionsPage::SimpleNesPicture => "simple_nes_picture",
+        OptionsPage::SimpleRendering3d => "simple_rendering_3d",
+        OptionsPage::SimpleAudio => "simple_audio",
+        OptionsPage::SimpleEmulation => "simple_emulation",
+        OptionsPage::AllSettings => "all_settings",
     }
 }
 
@@ -92,7 +112,10 @@ impl Tree {
                 .iter()
                 .filter_map(|row| match row {
                     GameRow::Option(row) => Some(*row),
-                    GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks => None,
+                    GameRow::ResetAll
+                    | GameRow::Widescreen
+                    | GameRow::Hacks
+                    | GameRow::ResetSmart3d => None,
                 })
                 .collect(),
         }
@@ -135,7 +158,9 @@ fn descend(
 /// camera) and this walk has to see those too.
 fn settings_of(row: OptionRow) -> Vec<SettingId> {
     match row {
-        OptionRow::Setting(id) => vec![id],
+        OptionRow::Setting(id) | OptionRow::Switch(id) => vec![id],
+        OptionRow::WidescreenOn => vec![SettingId::VideoWidescreen],
+        OptionRow::Signal => vec![SettingId::VideoCompositeSignal, SettingId::VideoSignalKind],
         // The camera view asks the application for a preset, the controls open their own screen
         // and a title or a page row holds nothing: none of them is a setting of the model.
         OptionRow::Group(_) | OptionRow::Page(_) | OptionRow::Controls | OptionRow::Camera => {
@@ -191,19 +216,32 @@ fn ro_3_every_row_the_console_offered_is_still_reachable() {
     }
     assert!(missing.is_empty(), "no longer reachable: {missing:?}");
 
-    // The touch-pad row keeps its behaviour: it is the Android main page and nothing else.
-    assert_eq!(
-        TOUCH_ROWS.len(),
-        ROWS.len() + 1,
-        "the Android page is the main page and the touch-pad row"
-    );
-    assert!(TOUCH_ROWS.contains(&OptionRow::TouchPad));
-    assert!(!ROWS.contains(&OptionRow::TouchPad));
-    let without: Vec<OptionRow> = TOUCH_ROWS
+    // The Android main page is the main page, the orientation and the touch screen's page, which
+    // holds the touch-pad row (owner request: the pad's size, vibrations and extra buttons).
+    let touch = OptionRow::Page(OptionsPage::Touch);
+    let orientation = OptionRow::Choice(SettingId::UiOrientation);
+    // Xnes3D+: the Android page also has the games and profiles page, puts the rows players look
+    // for first and has no Language row (English only), so the rows are compared without their
+    // order.
+    let library = OptionRow::Page(OptionsPage::Library);
+    assert!(TOUCH_ROWS.contains(&touch) && TOUCH_ROWS.contains(&orientation));
+    assert!(TOUCH_ROWS.contains(&library));
+    assert!(!ROWS.contains(&touch));
+    assert!(OptionsPage::Touch.rows().contains(&OptionRow::TouchPad));
+    assert!(!OptionsPage::Touch.rows().contains(&orientation));
+    let mut without: Vec<String> = TOUCH_ROWS
         .into_iter()
-        .filter(|row| *row != OptionRow::TouchPad)
+        .filter(|row| *row != touch && *row != orientation && *row != library)
+        .map(|row| format!("{row:?}"))
         .collect();
-    assert_eq!(ROWS.to_vec(), without);
+    let mut main: Vec<String> = ROWS
+        .into_iter()
+        .filter(|row| *row != OptionRow::Language)
+        .map(|row| format!("{row:?}"))
+        .collect();
+    without.sort();
+    main.sort();
+    assert_eq!(main, without);
 
     // Every setting the console offered is still offered, which is the same claim read of the
     // settings rather than of the rows — the overscan's nine included.
@@ -257,7 +295,8 @@ fn ro_3_no_row_is_reachable_from_two_places() {
     let mut places: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (path, row) in walk(Tree::Global) {
         // A group title is a label, not a row: the same title may head a group on two pages.
-        if matches!(row, OptionRow::Group(_)) {
+        // The reset row of lot REWRITE-UI ends every page.
+        if matches!(row, OptionRow::Group(_) | OptionRow::Reset) {
             continue;
         }
         places
@@ -458,12 +497,15 @@ fn ro_3_write_the_option_tree_golden() {
 fn tree_text() -> String {
     let mut out = String::from("options\n");
     emit(Tree::Global, &ROWS, 1, &mut out);
+    out.push_str("simple options\n");
+    emit(Tree::Global, &SIMPLE_ROWS, 1, &mut out);
     out.push_str("game options\n");
     for row in game_options::GAME_MAIN {
         match row {
             GameRow::ResetAll => line(&mut out, 1, "row.reset_all"),
             GameRow::Widescreen => line(&mut out, 1, "row.widescreen"),
             GameRow::Hacks => line(&mut out, 1, "page.hacks"),
+            GameRow::ResetSmart3d => line(&mut out, 1, "row.reset_smart3d"),
             GameRow::Option(row) => emit(Tree::Game, &[row], 1, &mut out),
         }
     }

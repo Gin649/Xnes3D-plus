@@ -6,7 +6,7 @@
 //! ([`Submenu`]) and a choice names what makes it selected ([`Selection`]); the model reads the
 //! host it is given at the moment it builds the children or answers.
 
-use zax_nes::ControllerPortType;
+use zax_core_api::ControllerPortType;
 use zax_render::camera::CameraMode;
 use zax_settings::catalogue::{self, SettingId};
 
@@ -19,6 +19,7 @@ use crate::emulation::commands::{Command, CommandArgs, Shortcut};
 use crate::emulation::host::SlotPatchStatus;
 use crate::emulation::speed_setting;
 use crate::persistence::app_settings::{AppSettings, TvRegionSetting};
+use crate::persistence::console_model::ConsoleModel;
 use crate::persistence::save_slots::{
     numbered_slot_id, SaveSlotRecord, EXPOSED_SLOT_COUNT, QUICK_SLOT_ID,
 };
@@ -54,6 +55,8 @@ pub enum Submenu {
     Speed,
     /// The video regions.
     Region,
+    /// The console models (lot FIDPLUS-1, G1).
+    ConsoleModel,
     /// The two controller ports.
     Ports,
     /// The device of one port.
@@ -66,6 +69,8 @@ pub enum Submenu {
     Volume,
     /// The movies of the movies folder.
     Movies,
+    /// The ways of importing 3dSen's profiles.
+    ImportThreeDSen,
 }
 
 /// What makes a [`MenuItemKind::Choice`] the selected one.
@@ -75,6 +80,8 @@ pub enum Selection {
     Speed(i32),
     /// The video region is this one and not detected automatically.
     Region(TvRegionSetting),
+    /// Every value this console model sets is in force.
+    ConsoleModel(ConsoleModel),
     /// This port holds this device.
     Port(usize, ControllerPortType),
     /// The camera is in this mode.
@@ -189,6 +196,15 @@ impl MenuItem {
         }
     }
 
+    /// A submenu whose title also runs `command` when it is clicked (lot REWRITE-UI: hovering
+    /// "Load a state" lists the slots, clicking it opens the slots with their pictures).
+    fn sub_clicked(label: String, submenu: Submenu, command: UiCommand) -> Self {
+        Self {
+            ui_command: Some(command),
+            ..Self::sub(label, submenu)
+        }
+    }
+
     /// A line of text that does nothing, such as "(empty)".
     #[must_use]
     pub fn note(label: String) -> Self {
@@ -285,11 +301,13 @@ impl MenuBarModel {
     pub fn children(submenu: Submenu, host: &AppHost) -> Vec<MenuItem> {
         match submenu {
             Submenu::RecentRoms => recent_rom_items(&recent_roms(host)),
+            Submenu::ImportThreeDSen => import_three_d_sen_items(),
             Submenu::LoadState => slot_items(Command::LoadSlot, Command::QuickLoad, host),
             Submenu::SaveState => slot_items(Command::SaveSlot, Command::QuickSave, host),
             Submenu::DeleteState => delete_slot_items(host),
             Submenu::Speed => speed_items(),
             Submenu::Region => region_items(),
+            Submenu::ConsoleModel => console_model_items(),
             Submenu::Ports => port_items(),
             Submenu::Port(port) => port_device_items(port),
             Submenu::CameraMode => camera_items(),
@@ -319,6 +337,7 @@ fn is_selected(selection: Selection, host: &AppHost) -> bool {
     match selection {
         Selection::Speed(value) => settings.game_speed() == value,
         Selection::Region(region) => !settings.auto_tv_mode() && settings.tv_mode() == region,
+        Selection::ConsoleModel(console) => console.is_selected(settings),
         Selection::Port(port, device) => host.port_type(port) == device,
         Selection::Camera(mode) => host.scene().camera.mode() == mode,
         Selection::Skybox(value) => settings.skybox() == value,
@@ -328,6 +347,35 @@ fn is_selected(selection: Selection, host: &AppHost) -> bool {
             let shown = (settings.volume() * 100.0).round_ties_even() as i32;
             shown == percent
         }
+    }
+}
+
+/// The Emulation menu; lot FDS: the Disk System drive's commands, greyed out without one.
+fn emulation_menu() -> Menu {
+    let item = |command| MenuItem::of(command, None, CommandArgs::default());
+    Menu {
+        title: text::menu_emulation(),
+        items: vec![
+            item(Command::PauseResume),
+            item(Command::Reset),
+            // AMD-044 REQ-LOOP-072: the soft reset sits right next to the hard one.
+            item(Command::SoftReset),
+            item(Command::Stop),
+            MenuItem::rule(),
+            item(Command::SwitchDiskSide),
+            item(Command::InsertNextDisk),
+            item(Command::EjectDisk),
+            MenuItem::rule(),
+            item(Command::FastForward),
+            item(Command::Rollback),
+            item(Command::FrameBack),
+            item(Command::FrameAdvance),
+            MenuItem::rule(),
+            MenuItem::sub(text::speed(), Submenu::Speed),
+            MenuItem::sub(text::region(), Submenu::Region),
+            MenuItem::sub(text::console_model(), Submenu::ConsoleModel),
+            MenuItem::sub(text::ports(), Submenu::Ports),
+        ],
     }
 }
 
@@ -343,28 +391,29 @@ fn build_menus() -> Vec<Menu> {
             item(Command::ResumeLast),
             MenuItem::rule(),
             item(Command::ChooseProfile),
-            // AMD-053 REQ-UI-210: the favourite mark of the game being played, and the filter the
-            // enumeration of the games reads.
-            item(Command::ToggleFavorite),
-            item(Command::FilterFavorites),
+            // Lot REWRITE-UI (owner, 2026-11-17): the favourite mark and its filter, the deletion
+            // of a game and the two covers served a game library the PC window no longer shows;
+            // the commands stay (Lua, shortcuts, the console mode's favourite), the entries go.
             item(Command::ImportProfile),
-            // AMD-030 §2: "Fichier → Importer depuis 3dSen…", right after the single-file import
-            // it extends.
-            item(Command::ImportThreeDSen),
-            // SPEC-10 REQ-UI-037 with AMD-010 §3: the deletion of a user profile is one of the
-            // functions the amendment keeps mandatory, and the tile button it describes becomes
-            // a menu entry here: the presentation is informative, the function is not.
-            item(Command::DeleteGame),
+            // AMD-030 §2: "Fichier → Importer depuis 3dSen", right after the single-file import
+            // it extends; a submenu of its ways since the owner's request of 2026-11-20.
+            MenuItem::sub(
+                strings::get(keys::MENU_IMPORT_THREE_DSEN),
+                Submenu::ImportThreeDSen,
+            ),
             MenuItem::rule(),
-            // REQ-PERS-036 is P3 after AMD-020 (Q-050); the two sources a menu can offer.
-            item(Command::CreateGameArt),
-            item(Command::ImportCover),
-            MenuItem::rule(),
-            MenuItem::sub(text::load_state(), Submenu::LoadState),
-            MenuItem::sub(text::save_state(), Submenu::SaveState),
-            // The slots with their pictures, in the screens of the console mode.
-            MenuItem::of_ui(UiCommand::LoadStates, "Ctrl+L"),
-            MenuItem::of_ui(UiCommand::SaveStates, "Ctrl+S"),
+            // Hovered, the slots; clicked (or Ctrl+L / Ctrl+S), the slots with their pictures in
+            // the screens of the console mode (lot REWRITE-UI: one entry each instead of two).
+            MenuItem::sub_clicked(
+                text::load_state(),
+                Submenu::LoadState,
+                UiCommand::LoadStates,
+            ),
+            MenuItem::sub_clicked(
+                text::save_state(),
+                Submenu::SaveState,
+                UiCommand::SaveStates,
+            ),
             // REQ-UI-052: the slot deletion of SPEC-09 REQ-PERS-054 needs a route of its own,
             // since a classic menu has no selected tile to hang a small button on.
             MenuItem::sub(text::delete_state(), Submenu::DeleteState),
@@ -372,25 +421,7 @@ fn build_menus() -> Vec<Menu> {
             item(Command::Quit),
         ],
     };
-    let emulation = Menu {
-        title: text::menu_emulation(),
-        items: vec![
-            item(Command::PauseResume),
-            item(Command::Reset),
-            // AMD-044 REQ-LOOP-072: the soft reset sits right next to the hard one.
-            item(Command::SoftReset),
-            item(Command::Stop),
-            MenuItem::rule(),
-            item(Command::FastForward),
-            item(Command::Rollback),
-            item(Command::FrameBack),
-            item(Command::FrameAdvance),
-            MenuItem::rule(),
-            MenuItem::sub(text::speed(), Submenu::Speed),
-            MenuItem::sub(text::region(), Submenu::Region),
-            MenuItem::sub(text::ports(), Submenu::Ports),
-        ],
-    };
+    let emulation = emulation_menu();
     let video = Menu {
         title: text::menu_video(),
         items: vec![
@@ -486,6 +517,16 @@ fn slot_items(numbered: Command, quick: Command, host: &AppHost) -> Vec<MenuItem
                 MenuWarning::Blocked
             }
         };
+        // The engine that made the state, when it is not Zaxnes or the game runs on another;
+        // a state of another engine than the one in play cannot load at all.
+        let (label, warning) = match slot_engine_note(host, &id) {
+            Some(EngineNote::Shown(note)) => (format!("{label} · {note}"), warning),
+            Some(EngineNote::Refused(note)) => (
+                format!("{} ({note})", slot_label(slot, host.slots.find(&id))),
+                MenuWarning::Blocked,
+            ),
+            None => (label, warning),
+        };
         let mut item = MenuItem::of(numbered, Some(label), CommandArgs::of_number(slot));
         item.warning = warning;
         items.push(item);
@@ -542,9 +583,42 @@ fn slot_count() -> i32 {
 }
 
 /// The label of numbered slot `slot` in the state submenus: "Slot 3 — date" or "Slot 3 — empty".
+/// What the slot lists say of the engine a state was made with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineNote {
+    /// The engine, shown because it is not Zaxnes or the game in play runs on another one.
+    Shown(String),
+    /// The state was made with another engine than the game in play's: why it cannot load.
+    Refused(String),
+}
+
+/// The engine note of the slot `slot_id`, `None` when there is nothing to say: an empty slot, or
+/// a Zaxnes state while the game runs on Zaxnes (or no game runs).
+#[must_use]
+pub fn slot_engine_note(host: &AppHost, slot_id: &str) -> Option<EngineNote> {
+    let engine = host.slot_engine(slot_id)?;
+    let in_play = host.engine_in_play();
+    if in_play.is_some_and(|in_play| in_play != engine) {
+        return Some(EngineNote::Refused(text::slot_other_engine(engine)));
+    }
+    (engine != zax_core_api::EngineKind::Zaxnes)
+        .then(|| EngineNote::Shown(text::slot_engine(engine)))
+}
+
 #[must_use]
 pub fn slot_label(slot: i32, record: Option<&SaveSlotRecord>) -> String {
     format!("{} {slot} — {}", text::slot_prefix(), state_stamp(record))
+}
+
+/// The short label of a slot (owner request, the in-game menu): `1:vide`, `1:30/12 14:05`.
+#[must_use]
+pub fn slot_short_label(slot: i32, record: Option<&SaveSlotRecord>) -> String {
+    let day_first = crate::ui::strings::language() == crate::ui::strings::UiLanguage::French;
+    let stamp = record
+        .filter(|record| record.is_occupied())
+        .and_then(|record| save_state_file::format_short_timestamp(record.saved_at, day_first))
+        .unwrap_or_else(text::empty_slot);
+    format!("{slot}:{stamp}")
 }
 
 fn state_stamp(record: Option<&SaveSlotRecord>) -> String {
@@ -552,6 +626,21 @@ fn state_stamp(record: Option<&SaveSlotRecord>) -> String {
         Some(record) if record.is_occupied() => save_state_file::format_timestamp(record.saved_at),
         _ => text::empty_slot(),
     }
+}
+
+/// Steam's 3dSen on Windows only (Steam's registry), then the bundle, the folder, the archive.
+fn import_three_d_sen_items() -> Vec<MenuItem> {
+    let item = |command| MenuItem::of(command, None, CommandArgs::default());
+    let mut items = Vec::new();
+    if cfg!(windows) {
+        items.push(item(Command::ImportThreeDSenSteam));
+    }
+    items.extend([
+        item(Command::ImportThreeDSenBundle),
+        item(Command::ImportThreeDSen),
+        item(Command::ImportThreeDSenArchive),
+    ]);
+    items
 }
 
 fn speed_items() -> Vec<MenuItem> {
@@ -584,6 +673,8 @@ fn region_items() -> Vec<MenuItem> {
         ("NTSC", TvRegionSetting::Ntsc),
         ("PAL", TvRegionSetting::Pal),
         ("Dendy", TvRegionSetting::Dendy),
+        ("PAL-M (famiclone)", TvRegionSetting::PalM),
+        ("PAL-N (famiclone)", TvRegionSetting::PalN),
     ] {
         items.push(MenuItem::choice(
             Command::SetRegion,
@@ -593,6 +684,20 @@ fn region_items() -> Vec<MenuItem> {
         ));
     }
     items
+}
+
+fn console_model_items() -> Vec<MenuItem> {
+    ConsoleModel::ALL
+        .into_iter()
+        .map(|console| {
+            MenuItem::choice(
+                Command::SetConsoleModel,
+                console.label().to_owned(),
+                CommandArgs::of_number(console as i32),
+                Selection::ConsoleModel(console),
+            )
+        })
+        .collect()
 }
 
 fn port_items() -> Vec<MenuItem> {

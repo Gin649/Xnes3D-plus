@@ -1,6 +1,7 @@
 package io.github.nixxou.zaxnes;
 
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.view.KeyEvent;
 
 import org.libsdl.app.SDLActivity;
@@ -74,16 +75,41 @@ public class ZaxnesActivity extends SDLActivity {
         return part.renameTo(out) ? out.getAbsolutePath() : null;
     }
 
+    /** The orientation the application asks for (its native code, through SDL's channel). */
+    private static final int COMMAND_ORIENTATION = COMMAND_USER + 1;
+
+    /**
+     * Xnes3D+: the first number of the Xnes3D+ menu messages. Kept above Zaxnes' own messages
+     * (the orientation is COMMAND_USER + 1). Must match FIRST_USER_MESSAGE in zax-platform's
+     * android_message.rs.
+     */
+    private static final int XNES_MESSAGES = COMMAND_USER + 0x100;
+
     /**
      * Xnes3D+: a row of the emulator's menus that needs Android (a picker, a download). The
      * native side sends it with SDL_AndroidSendMessage (zax-app's android_bridge.rs); SDL hands
-     * the numbers from 0x8000 up to this method. The answer comes back through the user data
+     * the numbers from XNES_MESSAGES up to this method, and the
+     * orientation (0 landscape, 1 portrait, 2 either way) too. The answer comes back through the user data
      * folder, see ProfilesActivity.
      */
     @Override
     protected boolean onUnhandledMessage(int command, Object param) {
-        if (command > 0x8000 && command <= 0x8000 + ProfilesActivity.LAST_ACTION) {
-            ProfilesActivity.open(this, command - 0x8000);
+        if (command > XNES_MESSAGES && command <= XNES_MESSAGES + ProfilesActivity.LAST_ACTION) {
+            ProfilesActivity.open(this, command - XNES_MESSAGES);
+            return true;
+        }
+        if (command == COMMAND_ORIENTATION && param instanceof Integer) {
+            switch ((Integer) param) {
+                case 1:
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                    break;
+                case 2:
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
+                    break;
+                default:
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                    break;
+            }
             return true;
         }
         return super.onUnhandledMessage(command, param);

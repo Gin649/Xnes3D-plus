@@ -9,6 +9,7 @@ use zax_settings::values::SettingValue;
 use super::overlay::CameraPreset;
 use super::pad::PadButton;
 use crate::android_bridge::AndroidAction;
+use crate::emulation::host::hack_options;
 use crate::persistence::app_settings::{AppSettings as _, AppSettingsMut as _, TvRegionSetting};
 use crate::render_scaling::{DIRECT_METHOD, RENDER_TEXTURE_METHOD};
 use crate::ui::{keys, shader_panel, strings, text};
@@ -65,6 +66,9 @@ pub enum OptionRow {
     Achievements,
     /// The touch pad (Rust-only, a touch screen only): no, yes or automatic.
     TouchPad,
+    /// A setting stepped through the choices of its domain, its label and its choices those of
+    /// the catalogue: the touch screen's (size, vibrations, orientation).
+    Choice(SettingId),
     /// A setting of the desktop's options window shown as a stepped row
     /// ([`super::advanced::ROW_SETTINGS`] names every one the console offers).
     Setting(SettingId),
@@ -74,6 +78,9 @@ pub enum OptionRow {
     /// The pre-filter of a slot of the slang shaders: none, then those of
     /// [`shader_panel::PRE_FILTERS`] (owner request).
     ShaderPreFilter(ShaderSlot),
+    /// Sub-option `n` of the shader family of a slot (lot REWRITE-UI): its choices or its steps,
+    /// as `shader_looks::sub_options` lists them for the family the slot holds.
+    ShaderOption(ShaderSlot, u8),
     /// The graphics API of the shaders page: OpenGL draws none, Vulkan draws them (owner
     /// decision: the slang shaders are offered on Vulkan only). Applied at the next start.
     ShaderBackend,
@@ -84,6 +91,22 @@ pub enum OptionRow {
     /// A group title: a label and nothing else (RO-3). Up and down skip it, and it is drawn
     /// smaller and dimmed. The field is the key of its text.
     Group(&'static str),
+    /// The mode of the options: simple or advanced (`ui.options_advanced`, lot REWRITE-UI).
+    Mode,
+    /// The performance / fidelity preset (`ui.options_preset`): stepping it writes the preset.
+    Preset,
+    /// The widescreen of every game by default, on or off (`video.widescreen`).
+    WidescreenOn,
+    /// The video signal: off, composite, S-Video or RF (`video.composite_signal` and
+    /// `video.signal_kind`, lot REWRITE-UI).
+    Signal,
+    /// A switch of a setting the desktop's classic window does not show (the widescreen ones).
+    Switch(SettingId),
+    /// The common default of a hack pack option (`hack_options::COMMON_OPTIONS`).
+    HackDefault(&'static str),
+    /// The page's settings back to their defaults: the chosen preset's values where it manages
+    /// a setting, the setting's own default elsewhere (lot REWRITE-UI).
+    Reset,
 }
 
 /// A page of the console options (RO-3, the owner's mockup): the main page climbs to the
@@ -126,11 +149,28 @@ pub enum OptionsPage {
     Shaders,
     /// Xnes3D+ (Android): the ROM folder and the 3D profiles.
     Library,
+    /// The touch screen (Android, owner request): the pad, its size and vibrations, the
+    /// orientation.
+    Touch,
+    /// The settings the chosen preset proposes (lot REWRITE-UI): its rows depend on the preset,
+    /// so the options model gives them ([`HandheldOptionsModel::rows`]).
+    PresetOptions,
+    /// The widescreen and the hacks: the defaults of every game with a widescreen patch.
+    Widescreen,
+    /// The simple mode's pages: a few rows of the advanced ones (the window's simple tabs).
+    SimpleDisplay,
+    SimpleNesPicture,
+    SimpleRendering3d,
+    SimpleAudio,
+    SimpleEmulation,
+    /// Xnes3D+: every setting, one row on the simple main page away (the advanced mode's main
+    /// page, without the rows the simple main page already has).
+    AllSettings,
 }
 
 impl OptionsPage {
     /// Every page, for the tests that walk them all.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 22] = [
         Self::Optimizations,
         Self::Advanced,
         Self::Display,
@@ -144,6 +184,15 @@ impl OptionsPage {
         Self::Audio,
         Self::Shaders,
         Self::Library,
+        Self::Touch,
+        Self::PresetOptions,
+        Self::Widescreen,
+        Self::SimpleDisplay,
+        Self::SimpleNesPicture,
+        Self::SimpleRendering3d,
+        Self::SimpleAudio,
+        Self::SimpleEmulation,
+        Self::AllSettings,
     ];
 
     /// The key of the page's title.
@@ -152,17 +201,22 @@ impl OptionsPage {
         match self {
             Self::Optimizations => keys::HANDHELD_OPTION_OPTIMIZATIONS,
             Self::Advanced => keys::HANDHELD_OPTION_ADVANCED,
-            Self::Display => keys::TAB_DISPLAY,
-            Self::Rendering3d => keys::TAB_RENDER_3D,
+            Self::Display | Self::SimpleDisplay => keys::TAB_DISPLAY,
+            Self::Rendering3d | Self::SimpleRendering3d => keys::TAB_RENDER_3D,
             Self::EnhancedEffects => keys::PAGE_ENHANCED_EFFECTS,
             Self::Geometry => keys::PAGE_GEOMETRY,
             Self::LightShadows => keys::TAB_LIGHT,
-            Self::NesPicture => keys::TAB_NES_PICTURE,
+            Self::NesPicture | Self::SimpleNesPicture => keys::TAB_NES_PICTURE,
             Self::Camera => keys::TAB_CAMERA,
-            Self::Emulation => keys::TAB_EMULATION,
-            Self::Audio => keys::TAB_AUDIO,
+            Self::Emulation | Self::SimpleEmulation => keys::TAB_EMULATION,
+            Self::Audio | Self::SimpleAudio => keys::TAB_AUDIO,
             Self::Shaders => "shaders.title",
             Self::Library => LIBRARY_TITLE,
+            Self::Touch => keys::HANDHELD_OPTION_TOUCH_SCREEN,
+            Self::PresetOptions => "options.new.preset_options",
+            Self::Widescreen => "options.new.tab.widescreen",
+            // Xnes3D+: its title is plain English (`plain::page_title`).
+            Self::AllSettings => "Advanced settings",
         }
     }
 
@@ -183,6 +237,16 @@ impl OptionsPage {
             Self::Audio => &AUDIO_ROWS,
             Self::Shaders => &SHADER_ROWS,
             Self::Library => &LIBRARY_ROWS,
+            Self::Touch => &TOUCH_SCREEN_ROWS,
+            // The model gives the chosen preset's rows.
+            Self::PresetOptions => &[OptionRow::Reset],
+            Self::Widescreen => &WIDESCREEN_ROWS,
+            Self::SimpleDisplay => &SIMPLE_DISPLAY_ROWS,
+            Self::SimpleNesPicture => &SIMPLE_NES_PICTURE_ROWS,
+            Self::SimpleRendering3d => &SIMPLE_RENDERING_3D_ROWS,
+            Self::SimpleAudio => &SIMPLE_AUDIO_ROWS,
+            Self::SimpleEmulation => &SIMPLE_EMULATION_ROWS,
+            Self::AllSettings => &XNES_ALL_SETTINGS_ROWS,
         }
     }
 
@@ -193,9 +257,124 @@ impl OptionsPage {
     }
 }
 
-/// The rows of the main page, in order (RO-3: the owner's mockup). "Camera view" and "Show FPS"
-/// left it for the *Advanced options* hub; the shaders came up from it (owner request).
-pub const ROWS: [OptionRow; 13] = [
+/// The rows of the main page in the **simple** mode (lot REWRITE-UI): the mode, the preset and
+/// what it proposes, then the window's simple tabs as pages.
+pub const SIMPLE_ROWS: [OptionRow; 15] = [
+    OptionRow::Mode,
+    OptionRow::Preset,
+    OptionRow::Page(OptionsPage::PresetOptions),
+    OptionRow::Language,
+    OptionRow::Volume,
+    OptionRow::WidescreenOn,
+    OptionRow::Region,
+    OptionRow::Page(OptionsPage::SimpleDisplay),
+    OptionRow::Page(OptionsPage::SimpleNesPicture),
+    OptionRow::Page(OptionsPage::SimpleRendering3d),
+    OptionRow::Page(OptionsPage::SimpleAudio),
+    OptionRow::Page(OptionsPage::SimpleEmulation),
+    OptionRow::Controls,
+    OptionRow::Achievements,
+    OptionRow::Reset,
+];
+
+/// [`SIMPLE_ROWS`] where a touch screen is offered (Android): the orientation and the touch
+/// screen's page, as in [`TOUCH_ROWS`].
+///
+/// Xnes3D+: as in [`TOUCH_ROWS`], the games and profiles page, RetroAchievements, the controls
+/// and the touch screen come first, and there is no Language row (English only).
+pub const SIMPLE_TOUCH_ROWS: [OptionRow; 17] = [
+    OptionRow::Page(OptionsPage::Library),
+    OptionRow::Achievements,
+    OptionRow::Controls,
+    OptionRow::Page(OptionsPage::Touch),
+    OptionRow::Mode,
+    OptionRow::Preset,
+    OptionRow::Page(OptionsPage::PresetOptions),
+    OptionRow::Volume,
+    OptionRow::WidescreenOn,
+    OptionRow::Region,
+    OptionRow::Choice(SettingId::UiOrientation),
+    OptionRow::Page(OptionsPage::SimpleDisplay),
+    OptionRow::Page(OptionsPage::SimpleNesPicture),
+    OptionRow::Page(OptionsPage::SimpleRendering3d),
+    OptionRow::Page(OptionsPage::SimpleAudio),
+    OptionRow::Page(OptionsPage::SimpleEmulation),
+    OptionRow::Reset,
+];
+
+/// *Display* in the simple mode.
+pub const SIMPLE_DISPLAY_ROWS: [OptionRow; 6] = [
+    OptionRow::ShowFps,
+    OptionRow::Setting(SettingId::VideoVSync),
+    OptionRow::Setting(SettingId::VideoAntiAlias),
+    OptionRow::Setting(SettingId::VideoSkipFrame),
+    OptionRow::Page(OptionsPage::Shaders),
+    OptionRow::Reset,
+];
+
+/// *NES picture* in the simple mode.
+pub const SIMPLE_NES_PICTURE_ROWS: [OptionRow; 5] = [
+    OptionRow::Signal,
+    OptionRow::Setting(SettingId::VideoTvModel),
+    OptionRow::Palette,
+    OptionRow::Overscan,
+    OptionRow::Reset,
+];
+
+/// *3D rendering* in the simple mode.
+pub const SIMPLE_RENDERING_3D_ROWS: [OptionRow; 7] = [
+    OptionRow::Setting(SettingId::RenderVisualStyle),
+    OptionRow::Setting(SettingId::RenderStyleReflections),
+    OptionRow::Page(OptionsPage::Geometry),
+    OptionRow::Setting(SettingId::LightIntensity),
+    OptionRow::Shadows,
+    OptionRow::Setting(SettingId::CameraFov),
+    OptionRow::Reset,
+];
+
+/// *Audio* in the simple mode.
+pub const SIMPLE_AUDIO_ROWS: [OptionRow; 3] = [
+    OptionRow::Volume,
+    OptionRow::Setting(SettingId::AudioConsoleProfile),
+    OptionRow::Reset,
+];
+
+/// *Emulation* in the simple mode.
+pub const SIMPLE_EMULATION_ROWS: [OptionRow; 7] = [
+    OptionRow::Setting(SettingId::EmuRunAhead),
+    OptionRow::Setting(SettingId::EmuSmoothScrollAhead),
+    OptionRow::Setting(SettingId::EmuSmoothScroll3d),
+    OptionRow::Setting(SettingId::EmuRainbowNetwork),
+    OptionRow::Setting(SettingId::EmuExactRate),
+    OptionRow::Setting(SettingId::EmuRealtimeInput),
+    OptionRow::Reset,
+];
+
+/// *Widescreen & Hacks*, the advanced mode's page: the defaults of every game with a widescreen
+/// patch (a game's own choices, in its hacks screen, come first).
+pub const WIDESCREEN_ROWS: [OptionRow; 12] = [
+    OptionRow::Choice(SettingId::VideoWidescreen),
+    OptionRow::Choice(SettingId::VideoWidescreenExtra),
+    OptionRow::Switch(SettingId::VideoWidescreenAdvanced),
+    OptionRow::HackDefault("no_slowdown"),
+    OptionRow::HackDefault("invincible"),
+    OptionRow::HackDefault("level_select"),
+    OptionRow::HackDefault("margin_enemies"),
+    OptionRow::HackDefault("margin_freeze"),
+    OptionRow::HackDefault("margin_freeze_tint"),
+    OptionRow::Setting(SettingId::VideoWidescreenStrictEdges),
+    OptionRow::Switch(SettingId::EmuBuiltinPatches),
+    OptionRow::Reset,
+];
+
+/// The rows of the main page in the **advanced** mode, in order (RO-3: the owner's mockup).
+/// "Camera view" and "Show FPS" left it for the *Advanced options* hub; the shaders came up from
+/// it (owner request). Lot REWRITE-UI put the mode, the preset, the widescreen page and the
+/// reset row round it.
+pub const ROWS: [OptionRow; 18] = [
+    OptionRow::Mode,
+    OptionRow::Preset,
+    OptionRow::Page(OptionsPage::PresetOptions),
     OptionRow::Language,
     OptionRow::Volume,
     OptionRow::RenderScale,
@@ -203,35 +382,81 @@ pub const ROWS: [OptionRow; 13] = [
     OptionRow::Palette,
     OptionRow::Overscan,
     OptionRow::Region,
+    OptionRow::Page(OptionsPage::Widescreen),
     OptionRow::Page(OptionsPage::Shaders),
     OptionRow::Page(OptionsPage::Optimizations),
     OptionRow::Page(OptionsPage::Advanced),
     OptionRow::Controls,
     OptionRow::Achievements,
     OptionRow::Profiler,
+    OptionRow::Reset,
 ];
 
 /// The rows of the main page where the touch pad is offered (Android): its row after the
 /// controls, which is where it was before RO-3.
 ///
-/// Xnes3D+: the games and profiles page first, then RetroAchievements and the controls, the
-/// rows most players look for; the picture and performance rows after them.
-/// Xnes3D+ is in English only, so it has no Language row.
-pub const TOUCH_ROWS: [OptionRow; 14] = [
+/// Xnes3D+: the games and profiles page first, then RetroAchievements, the controls and the
+/// touch screen, the rows most players look for; the presets, picture and performance rows
+/// after them. Xnes3D+ is in English only, so it has no Language row.
+pub const TOUCH_ROWS: [OptionRow; 20] = [
     OptionRow::Page(OptionsPage::Library),
     OptionRow::Achievements,
     OptionRow::Controls,
-    OptionRow::TouchPad,
+    OptionRow::Page(OptionsPage::Touch),
+    OptionRow::Mode,
+    OptionRow::Preset,
+    OptionRow::Page(OptionsPage::PresetOptions),
     OptionRow::Volume,
     OptionRow::RenderScale,
     OptionRow::Shadows,
     OptionRow::Palette,
     OptionRow::Overscan,
     OptionRow::Region,
+    // Owner request: the orientation of the screen.
+    OptionRow::Choice(SettingId::UiOrientation),
+    OptionRow::Page(OptionsPage::Widescreen),
     OptionRow::Page(OptionsPage::Shaders),
     OptionRow::Page(OptionsPage::Optimizations),
     OptionRow::Page(OptionsPage::Advanced),
     OptionRow::Profiler,
+    OptionRow::Reset,
+];
+
+/// Xnes3D+: the main page of the options on Android, whatever the mode. The rows players look
+/// for come first, then one Performance row in place of the preset pages, the simple pages, and
+/// one Advanced settings page that holds everything else. No mode row, no language row (English
+/// only) and no profiler.
+pub const XNES_MAIN_ROWS: [OptionRow; 14] = [
+    OptionRow::Page(OptionsPage::Library),
+    OptionRow::Achievements,
+    OptionRow::Controls,
+    OptionRow::Page(OptionsPage::Touch),
+    OptionRow::Preset,
+    OptionRow::Volume,
+    OptionRow::WidescreenOn,
+    OptionRow::Page(OptionsPage::SimpleDisplay),
+    OptionRow::Page(OptionsPage::SimpleNesPicture),
+    OptionRow::Page(OptionsPage::SimpleRendering3d),
+    OptionRow::Page(OptionsPage::SimpleAudio),
+    OptionRow::Page(OptionsPage::SimpleEmulation),
+    OptionRow::Page(OptionsPage::AllSettings),
+    OptionRow::Reset,
+];
+
+/// Xnes3D+: the Advanced settings page: what the advanced main page has beyond
+/// [`XNES_MAIN_ROWS`].
+pub const XNES_ALL_SETTINGS_ROWS: [OptionRow; 11] = [
+    OptionRow::RenderScale,
+    OptionRow::Shadows,
+    OptionRow::Palette,
+    OptionRow::Overscan,
+    OptionRow::Region,
+    OptionRow::Choice(SettingId::UiOrientation),
+    OptionRow::Page(OptionsPage::Widescreen),
+    OptionRow::Page(OptionsPage::Shaders),
+    OptionRow::Page(OptionsPage::Optimizations),
+    OptionRow::Page(OptionsPage::Advanced),
+    OptionRow::Reset,
 ];
 
 /// Xnes3D+: the title of the games and profiles page (English only, like the rest of the
@@ -239,10 +464,13 @@ pub const TOUCH_ROWS: [OptionRow; 14] = [
 pub const LIBRARY_TITLE: &str = "Games and 3D profiles";
 
 /// Xnes3D+: the rows of the games and profiles page, each carried out by Android.
-pub const LIBRARY_ROWS: [OptionRow; 10] = [
+pub const LIBRARY_ROWS: [OptionRow; 13] = [
     OptionRow::Group("Games"),
     OptionRow::Android(AndroidAction::ChooseRomFolder),
     OptionRow::Android(AndroidAction::ChooseSavesFolder),
+    OptionRow::Group("Box art and game info"),
+    OptionRow::Android(AndroidAction::DownloadMedia),
+    OptionRow::Android(AndroidAction::EsDeMedia),
     OptionRow::Group("3D profiles"),
     OptionRow::Android(AndroidAction::Import3dSen),
     OptionRow::Android(AndroidAction::CommunityProfiles),
@@ -262,6 +490,9 @@ fn android_label(action: AndroidAction) -> String {
         AndroidAction::CopyProfiles => "Copy from the profiles folder now",
         AndroidAction::ChooseSavesFolder => "Saves folder",
         AndroidAction::CheckUpdates => "Check for updates",
+        AndroidAction::DownloadMedia => "Download from LaunchBox",
+        AndroidAction::EsDeMedia => "Use what ES-DE downloaded",
+        AndroidAction::MediaRequest => "Box art",
     }
     .to_owned()
 }
@@ -292,7 +523,44 @@ fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
         AndroidAction::CommunityProfiles => "Download".to_owned(),
         AndroidAction::CopyProfiles => "Copy".to_owned(),
         AndroidAction::CheckUpdates => format!("v{}", crate::android_bridge::app_version()),
+        AndroidAction::DownloadMedia => "Download".to_owned(),
+        AndroidAction::EsDeMedia | AndroidAction::MediaRequest => "Copy".to_owned(),
     }
+}
+
+/// The rows of the touch screen's page (owner request): the pad, its size, its vibrations and its
+/// rewind and fast-forward buttons.
+pub const TOUCH_SCREEN_ROWS: [OptionRow; 6] = [
+    OptionRow::TouchPad,
+    OptionRow::Choice(SettingId::InputTouchScale),
+    OptionRow::Choice(SettingId::InputTouchHapticDpad),
+    OptionRow::Choice(SettingId::InputTouchHapticButtons),
+    OptionRow::Choice(SettingId::InputTouchExtra),
+    OptionRow::Reset,
+];
+
+/// The values of a setting's choices, in their order.
+fn choice_values(id: SettingId) -> Vec<i32> {
+    catalogue::descriptor(id)
+        .domain()
+        .options()
+        .unwrap_or_default()
+        .iter()
+        .map(|option| {
+            #[allow(clippy::cast_possible_truncation)] // A choice's value.
+            let value = option.value as i32;
+            value
+        })
+        .collect()
+}
+
+/// The label of the choice the setting `id` holds.
+fn choice_text(id: SettingId, settings: &SettingsModel) -> String {
+    let current = settings.get(id).as_int();
+    catalogue::descriptor(id)
+        .domain()
+        .label_of(f64::from(current))
+        .map_or_else(|| current.to_string(), text::label_of_option)
 }
 
 /// The values of the touch pad row (`input.touch_pad`): no, yes, automatic.
@@ -305,7 +573,7 @@ fn touch_pad(settings: &SettingsModel) -> i32 {
 /// The rows of the "Optimizations" page (owner request: the performance switches together). RO-3
 /// moved the smooth Lua collector here from the flat advanced page, where it was the one
 /// performance switch not with the others.
-pub const OPTIMIZATION_ROWS: [OptionRow; 9] = [
+pub const OPTIMIZATION_ROWS: [OptionRow; 10] = [
     OptionRow::FrameCap,
     OptionRow::HalfRate3d,
     OptionRow::CatchUp,
@@ -315,12 +583,13 @@ pub const OPTIMIZATION_ROWS: [OptionRow; 9] = [
     OptionRow::LuaOptimized,
     OptionRow::LuaExperimental,
     OptionRow::Setting(SettingId::EmuLuaSmoothGc),
+    OptionRow::Reset,
 ];
 
 /// The rows of the *Shaders* page: the four slots, as the desktop's window has them (owner
 /// request). They are the same in a build without the shaders, which keeps the settings the
 /// desktop shares; such a build simply draws none.
-pub const SHADER_ROWS: [OptionRow; 10] = [
+pub const SHADER_ROWS: [OptionRow; 11] = [
     OptionRow::ShaderBackend,
     OptionRow::Setting(SettingId::VideoShaderResolution),
     OptionRow::Shader(ShaderSlot::TwoD),
@@ -331,6 +600,7 @@ pub const SHADER_ROWS: [OptionRow; 10] = [
     OptionRow::ShaderPreFilter(ShaderSlot::ThreeD),
     OptionRow::Shader(ShaderSlot::ThreeDWide),
     OptionRow::ShaderPreFilter(ShaderSlot::ThreeDWide),
+    OptionRow::Reset,
 ];
 
 /// The *Advanced options* hub: six pages where RO-2 left one flat list of 56 rows. It repeats
@@ -348,7 +618,7 @@ pub const ADVANCED_HUB: [OptionRow; 7] = [
 
 /// *Advanced options › Display*. The render scale is here **and** on the main page: the one
 /// setting the mockup gives two entry points on purpose.
-pub const DISPLAY_ROWS: [OptionRow; 11] = [
+pub const DISPLAY_ROWS: [OptionRow; 12] = [
     OptionRow::ShowFps,
     OptionRow::Setting(SettingId::VideoVSync),
     OptionRow::Setting(SettingId::VideoFrameRate),
@@ -360,20 +630,22 @@ pub const DISPLAY_ROWS: [OptionRow; 11] = [
     OptionRow::Setting(SettingId::VideoAntiAlias),
     OptionRow::Group(keys::GROUP_ADVANCED),
     OptionRow::Setting(SettingId::VideoMaxQueuedFrames),
+    OptionRow::Reset,
 ];
 
 /// *Advanced options › 3D rendering*.
-pub const RENDERING_3D_ROWS: [OptionRow; 5] = [
+pub const RENDERING_3D_ROWS: [OptionRow; 6] = [
     OptionRow::Setting(SettingId::RenderVisualStyle),
     OptionRow::Page(OptionsPage::EnhancedEffects),
     OptionRow::Page(OptionsPage::Geometry),
     OptionRow::Setting(SettingId::SceneSkybox),
     OptionRow::Setting(SettingId::RenderMeshAlgo),
+    OptionRow::Reset,
 ];
 
 /// *3D rendering › Enhanced effects* (AMD-055 REQ-SCN-079), the reflections and their four
 /// gradations under a title of their own.
-pub const ENHANCED_EFFECTS_ROWS: [OptionRow; 7] = [
+pub const ENHANCED_EFFECTS_ROWS: [OptionRow; 8] = [
     OptionRow::Setting(SettingId::RenderStyleVoxelGrid),
     OptionRow::Group(keys::GROUP_REFLECTIONS),
     OptionRow::Setting(SettingId::RenderStyleReflections),
@@ -381,19 +653,21 @@ pub const ENHANCED_EFFECTS_ROWS: [OptionRow; 7] = [
     OptionRow::Setting(SettingId::RenderStyleSsrClarity),
     OptionRow::Setting(SettingId::RenderStyleSsrLength),
     OptionRow::Setting(SettingId::RenderStyleSsrQuality),
+    OptionRow::Reset,
 ];
 
 /// *3D rendering › Geometry (curvature)* (AMD-043 REQ-SCN-066, AMD-046 §3).
-pub const GEOMETRY_ROWS: [OptionRow; 5] = [
+pub const GEOMETRY_ROWS: [OptionRow; 6] = [
     OptionRow::Setting(SettingId::SceneBendLr),
     OptionRow::Setting(SettingId::SceneBendTb),
     OptionRow::Setting(SettingId::SceneArcH),
     OptionRow::Setting(SettingId::SceneArcCenter),
     OptionRow::Setting(SettingId::SceneBend2dMode),
+    OptionRow::Reset,
 ];
 
 /// *Advanced options › Light and shadows*. The shadow switch itself is the main page's row.
-pub const LIGHT_SHADOWS_ROWS: [OptionRow; 9] = [
+pub const LIGHT_SHADOWS_ROWS: [OptionRow; 10] = [
     OptionRow::Setting(SettingId::LightIntensity),
     OptionRow::Setting(SettingId::RenderBackdropLighting),
     OptionRow::Setting(SettingId::RenderStylePixelShadow),
@@ -403,18 +677,37 @@ pub const LIGHT_SHADOWS_ROWS: [OptionRow; 9] = [
     OptionRow::Setting(SettingId::RenderStyleAoRadius),
     OptionRow::Setting(SettingId::RenderStyleAoThickness),
     OptionRow::Setting(SettingId::RenderStyleAoQuality),
+    OptionRow::Reset,
 ];
 
 /// *Advanced options › NES picture*. The palette is the main page's row and the overscan its own
 /// screen, so what is left is what the console puts out beyond them.
-pub const NES_PICTURE_ROWS: [OptionRow; 2] = [
+pub const NES_PICTURE_ROWS: [OptionRow; 14] = [
     OptionRow::Setting(SettingId::VideoRemoveSpriteLimit),
-    OptionRow::Setting(SettingId::VideoWidescreenStrictEdges),
+    // Lot FIDPLUS-D2b: the signal (Fidélité+) and the emphasis in 3D; lot REWRITE-UI: the
+    // signal's kind, its decoder and the television.
+    OptionRow::Signal,
+    OptionRow::Setting(SettingId::VideoTvModel),
+    OptionRow::Setting(SettingId::VideoEmphasis3d),
+    OptionRow::Setting(SettingId::VideoDecoderSharpness),
+    OptionRow::Setting(SettingId::VideoCombFilter),
+    OptionRow::Setting(SettingId::VideoFrozenDotCrawl),
+    OptionRow::Setting(SettingId::VideoRfNoise),
+    OptionRow::Setting(SettingId::VideoRfGhost),
+    OptionRow::Setting(SettingId::VideoTvHue),
+    OptionRow::Setting(SettingId::VideoTvSaturation),
+    OptionRow::Setting(SettingId::VideoTvContrast),
+    OptionRow::Setting(SettingId::VideoTvBrightness),
+    OptionRow::Reset,
 ];
 
 /// *Advanced options › Camera*: the preset row that left the main page, and the field of view.
-pub const CAMERA_ROWS: [OptionRow; 2] =
-    [OptionRow::Camera, OptionRow::Setting(SettingId::CameraFov)];
+pub const CAMERA_ROWS: [OptionRow; 4] = [
+    OptionRow::Camera,
+    OptionRow::Setting(SettingId::CameraFov),
+    OptionRow::Setting(SettingId::CameraFramePicture),
+    OptionRow::Reset,
+];
 
 /// *Advanced options › Emulation*. The region row of the main page sets the same two settings in
 /// one step; these are the two apart, as the mockup asks.
@@ -423,19 +716,62 @@ pub const CAMERA_ROWS: [OptionRow; 2] =
 /// run-ahead's frames and does nothing without it. The debugging view that goes with it
 /// (`emu.smooth_scroll_view`) is **not** here: like `audio.latency_ms` it stays a desktop row,
 /// this screen being a short curated list.
-pub const EMULATION_ROWS: [OptionRow; 6] = [
+///
+/// Xnes3D+: no engine row. Every game plays on the Zaxnes engine, the only one with the 3D,
+/// widescreen and hack features.
+pub const EMULATION_ROWS: [OptionRow; 41] = [
+    // Lot CARTDB: the cartridge database and the power-on RAM, as in the window.
+    OptionRow::Setting(SettingId::EmuCartridgeDb),
+    OptionRow::Setting(SettingId::EmuPowerOnRam),
+    OptionRow::Setting(SettingId::EmuPowerOnPpuRam),
+    OptionRow::Setting(SettingId::EmuPpuRevision),
+    OptionRow::Setting(SettingId::EmuMmc3Revision),
+    OptionRow::Setting(SettingId::EmuCpuRevision),
+    OptionRow::Setting(SettingId::EmuOamaddrWriteCorruption),
+    OptionRow::Setting(SettingId::EmuOamCorruption),
+    OptionRow::Setting(SettingId::EmuPpuBusConflicts),
+    OptionRow::Setting(SettingId::EmuOamaddrBug),
+    OptionRow::Setting(SettingId::EmuOamDecay),
+    OptionRow::Setting(SettingId::EmuRainbowNetwork),
+    OptionRow::Setting(SettingId::EmuVsDip1),
+    OptionRow::Setting(SettingId::EmuVsDip2),
+    OptionRow::Setting(SettingId::EmuVsDip3),
+    OptionRow::Setting(SettingId::EmuVsDip4),
+    OptionRow::Setting(SettingId::EmuVsDip5),
+    OptionRow::Setting(SettingId::EmuVsDip6),
+    OptionRow::Setting(SettingId::EmuVsDip7),
+    OptionRow::Setting(SettingId::EmuVsDip8),
+    OptionRow::Setting(SettingId::EmuPowerOnTop),
+    OptionRow::Setting(SettingId::EmuPpu2006Delay),
+    OptionRow::Setting(SettingId::EmuPpu2006Glitch),
+    OptionRow::Setting(SettingId::EmuPpu2000Glitch),
+    OptionRow::Setting(SettingId::EmuPaletteCorruption),
+    OptionRow::Setting(SettingId::EmuPpuResetLine),
+    OptionRow::Setting(SettingId::EmuCpuPpuAlignment),
+    OptionRow::Setting(SettingId::EmuCpuApuParity),
+    OptionRow::Setting(SettingId::EmuFidelityPlus),
+    OptionRow::Setting(SettingId::EmuFastCore),
+    OptionRow::Setting(SettingId::EmuExactRate),
+    OptionRow::Setting(SettingId::EmuRealtimeInput),
+    OptionRow::Setting(SettingId::EmuLatePresent),
     OptionRow::Setting(SettingId::EmuRunAhead),
     OptionRow::Setting(SettingId::EmuSmoothScrollAhead),
+    OptionRow::Setting(SettingId::EmuSmoothScroll3d),
     OptionRow::Setting(SettingId::EmuGameSpeed),
     OptionRow::Setting(SettingId::EmuAutoTvMode),
     OptionRow::Setting(SettingId::EmuTvMode),
     OptionRow::Setting(SettingId::InputEmulatedMenuButton),
+    OptionRow::Reset,
 ];
 
 /// *Advanced options › Audio* (AUDIO-2): the choice of output. The volume stays on the main page,
 /// and `audio.latency_ms` is deliberately not here — AUDIO-1 left it out of the console screen
 /// (owner request: that screen is a short curated list), and nothing of this lot changes that.
-pub const AUDIO_ROWS: [OptionRow; 1] = [OptionRow::Setting(SettingId::AudioClassicOutput)];
+pub const AUDIO_ROWS: [OptionRow; 3] = [
+    OptionRow::Setting(SettingId::AudioClassicOutput),
+    OptionRow::Setting(SettingId::AudioConsoleProfile),
+    OptionRow::Reset,
+];
 
 /// The values of the palette row (`video.nes_palette`): the setting's choices.
 fn palettes() -> Vec<i32> {
@@ -525,7 +861,9 @@ pub enum OptionsCommand {
 }
 
 /// How deep the pages go (RO-3): main › *Advanced options* › *3D rendering* › *Enhanced effects*.
-pub const MAX_DEPTH: usize = 3;
+///
+/// Xnes3D+: one more, for the Advanced settings page under the simple main page.
+pub const MAX_DEPTH: usize = 4;
 
 /// The index of the first row of `rows` a selection may rest on: a group title is a label, not a
 /// row. A page with nothing but group titles would be a mistake, and a test forbids it; the fall
@@ -562,7 +900,7 @@ pub fn step_selection(rows: &[OptionRow], from: usize, step: i32) -> usize {
 }
 
 /// The list and its selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandheldOptionsModel {
     selected: usize,
     /// The pages open over the main one, innermost last: each the page shown and the row of the
@@ -570,6 +908,13 @@ pub struct HandheldOptionsModel {
     /// the mockup being three levels deep.
     trail: [(OptionsPage, usize); MAX_DEPTH],
     depth: usize,
+    /// The mode of the options and the chosen preset, as the settings last held them
+    /// ([`Self::sync`]): they decide the main page's rows and the preset page's.
+    advanced: bool,
+    preset: usize,
+    /// The rows of the shaders page as the settings last held them: each slot's sub-options
+    /// follow the family it holds.
+    shader_rows: Vec<OptionRow>,
 }
 
 impl Default for HandheldOptionsModel {
@@ -586,10 +931,33 @@ impl HandheldOptionsModel {
             selected: 0,
             trail: [(OptionsPage::Advanced, 0); MAX_DEPTH],
             depth: 0,
+            advanced: false,
+            preset: 2,
+            shader_rows: Vec::new(),
         }
     }
 
-    /// The rows of the main page: the Android one where a touch screen is offered.
+    /// Takes the mode and the preset from `settings`. A mode that changed leaves the pages for
+    /// the main one, on its mode row (the two main pages differ).
+    pub fn sync(&mut self, settings: &SettingsModel) {
+        let advanced = crate::ui::presets::advanced(settings);
+        self.preset = crate::ui::presets::chosen(settings);
+        self.shader_rows = shader_rows(settings);
+        if advanced != self.advanced {
+            self.advanced = advanced;
+            self.depth = 0;
+            self.selected = 0;
+        }
+    }
+
+    /// Whether the options are in their advanced mode.
+    #[must_use]
+    pub const fn advanced(&self) -> bool {
+        self.advanced
+    }
+
+    /// The rows of the main page of the advanced mode: the Android one where a touch screen is
+    /// offered.
     #[must_use]
     pub fn main_rows() -> &'static [OptionRow] {
         // Xnes3D+: the Android rows come with the touch ones.
@@ -600,12 +968,29 @@ impl HandheldOptionsModel {
         }
     }
 
+    /// The rows of the main page of the simple mode.
+    #[must_use]
+    pub fn simple_main_rows() -> &'static [OptionRow] {
+        if zax_platform::input::touch::offered() {
+            &SIMPLE_TOUCH_ROWS
+        } else {
+            &SIMPLE_ROWS
+        }
+    }
+
     /// The rows of the page shown.
     #[must_use]
-    pub fn rows(&self) -> &'static [OptionRow] {
+    pub fn rows(&self) -> &[OptionRow] {
         match self.depth.checked_sub(1) {
-            Some(last) => self.trail[last].0.rows(),
-            None => Self::main_rows(),
+            Some(last) => match self.trail[last].0 {
+                OptionsPage::PresetOptions => preset_rows(self.preset),
+                OptionsPage::Shaders => &self.shader_rows,
+                page => page.rows(),
+            },
+            // Xnes3D+: on Android the main page is always the plain one.
+            None if crate::android_bridge::available() => &XNES_MAIN_ROWS,
+            None if self.advanced => Self::main_rows(),
+            None => Self::simple_main_rows(),
         }
     }
 
@@ -661,7 +1046,22 @@ impl HandheldOptionsModel {
         button: PadButton,
         settings: &mut SettingsModel,
     ) -> Option<OptionsCommand> {
+        self.sync(settings);
+        let command = self.press(button, settings);
+        self.sync(settings);
+        command
+    }
+
+    fn press(&mut self, button: PadButton, settings: &mut SettingsModel) -> Option<OptionsCommand> {
         match button {
+            // The reset row takes the page's settings back (lot REWRITE-UI).
+            PadButton::A | PadButton::Left | PadButton::Right
+                if self.selected() == OptionRow::Reset =>
+            {
+                let preset = self.preset;
+                let on_preset_page = self.page() == Some(OptionsPage::PresetOptions);
+                reset_page(self.rows(), settings, preset, on_preset_page);
+            }
             PadButton::Up => self.selected = step_selection(self.rows(), self.selected, -1),
             PadButton::Down => self.selected = step_selection(self.rows(), self.selected, 1),
             PadButton::Left | PadButton::Right | PadButton::A
@@ -671,6 +1071,9 @@ impl HandheldOptionsModel {
                     self.open(page);
                 }
             }
+            // A control only Zaxnes's own engine has does not step while another is chosen.
+            PadButton::Left | PadButton::Right | PadButton::A
+                if engine_lock(self.selected(), settings).is_some() => {}
             PadButton::Left => return self.step(settings, -1),
             PadButton::Right => return self.step(settings, 1),
             PadButton::A => {
@@ -694,8 +1097,92 @@ impl HandheldOptionsModel {
         None
     }
 
-    fn step(self, settings: &mut SettingsModel, step: i32) -> Option<OptionsCommand> {
+    fn step(&self, settings: &mut SettingsModel, step: i32) -> Option<OptionsCommand> {
         step_row(self.selected(), settings, step)
+    }
+}
+
+/// Steps one of the rows lot REWRITE-UI added: the mode, the preset, the widescreen and the
+/// switches of the widescreen page.
+fn step_options_row(row: OptionRow, settings: &mut SettingsModel, step: i32) {
+    match row {
+        OptionRow::Mode => {
+            let advanced = crate::ui::presets::advanced(settings);
+            settings.set(SettingId::UiOptionsAdvanced, SettingValue::Bool(!advanced));
+        }
+        OptionRow::Preset => {
+            let count = crate::ui::presets::PRESETS.len();
+            let indices: Vec<usize> = (0..count).collect();
+            let next = *cycled(&indices, &crate::ui::presets::chosen(settings), step);
+            crate::ui::presets::choose(settings, next);
+        }
+        OptionRow::Signal => {
+            let on = settings.get(SettingId::VideoCompositeSignal).as_bool();
+            let kind = settings
+                .get(SettingId::VideoSignalKind)
+                .as_int()
+                .clamp(0, 2);
+            let current = if on {
+                usize::try_from(kind + 1).unwrap_or(1)
+            } else {
+                0
+            };
+            let next = *cycled(&[0, 1, 2, 3], &current, step);
+            signal_choose(settings, next);
+        }
+        OptionRow::WidescreenOn => {
+            let on = settings.get(SettingId::VideoWidescreen).as_int() != 0;
+            settings.set(
+                SettingId::VideoWidescreen,
+                SettingValue::Enum(i32::from(!on)),
+            );
+        }
+        OptionRow::Switch(id) => {
+            let on = settings.get(id).as_bool();
+            settings.set(id, SettingValue::Bool(!on));
+        }
+        OptionRow::HackDefault(key) => {
+            let stored = settings.get(SettingId::EmuHackOptions);
+            let on = hack_default(stored.as_text(), key);
+            let text = hack_options::with_common(stored.as_text(), key, !on);
+            settings.set(SettingId::EmuHackOptions, SettingValue::Text(text));
+        }
+        _ => {}
+    }
+}
+
+/// Steps a row of the shaders page: a slot's family, the graphics API, a pre-filter or a
+/// sub-option of the family.
+fn step_shader_row(row: OptionRow, settings: &mut SettingsModel, step: i32) {
+    match row {
+        OptionRow::Shader(slot) => {
+            let picks = shader_panel::slot_picks(slot);
+            let next = cycled(&picks, &shader_panel::slot_pick(settings, slot), step).clone();
+            shader_panel::set_slot_pick(settings, slot, &next);
+        }
+        OptionRow::ShaderBackend => {
+            // OpenGL (0) and Vulkan (1); DirectX 12 is the desktop's, and a console is not one.
+            let next = i32::from(settings.get(SettingId::VideoBackend).as_int() != 1);
+            settings.set(SettingId::VideoBackend, SettingValue::Enum(next));
+        }
+        OptionRow::ShaderPreFilter(slot) => {
+            let choices: Vec<Option<&shader_panel::PreFilter>> = std::iter::once(None)
+                .chain(shader_panel::pre_filters().map(Some))
+                .collect();
+            let next = *cycled(&choices, &shader_panel::pre_filter_of(settings, slot), step);
+            crate::ui::shader_looks::set_pre_filter(settings, slot, next);
+        }
+        OptionRow::ShaderOption(slot, index) => {
+            if let Some(state) = crate::ui::shader_looks::state_of(settings, slot) {
+                if let Some(option) = crate::ui::shader_looks::sub_options(&state)
+                    .get(usize::from(index))
+                    .copied()
+                {
+                    crate::ui::shader_looks::step_sub_option(settings, slot, option, step);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -768,35 +1255,156 @@ pub fn step_row(row: OptionRow, settings: &mut SettingsModel, step: i32) -> Opti
             let next = *cycled(&TOUCH_PADS, &touch_pad(settings), step);
             settings.set(SettingId::InputTouchPad, SettingValue::Enum(next));
         }
-        OptionRow::Controls | OptionRow::Page(_) | OptionRow::Group(_) => {}
+        OptionRow::Choice(id) => {
+            let values = choice_values(id);
+            if !values.is_empty() {
+                let next = *cycled(&values, &settings.get(id).as_int(), step);
+                settings.set(id, SettingValue::Enum(next));
+            }
+        }
+        OptionRow::Controls | OptionRow::Page(_) | OptionRow::Group(_) | OptionRow::Reset => {}
+        OptionRow::Mode
+        | OptionRow::Preset
+        | OptionRow::WidescreenOn
+        | OptionRow::Signal
+        | OptionRow::Switch(_)
+        | OptionRow::HackDefault(_) => step_options_row(row, settings, step),
         OptionRow::Setting(id) => super::advanced::step(id, settings, step),
         OptionRow::Achievements => return Some(OptionsCommand::OpenAchievements),
         // Left and right do nothing on these: only A opens a picker.
         OptionRow::Android(_) => {}
-        OptionRow::Shader(slot) => {
-            let picks = shader_panel::slot_picks(slot);
-            let next = cycled(&picks, &shader_panel::slot_pick(settings, slot), step).clone();
-            shader_panel::set_slot_pick(settings, slot, &next);
-        }
-        OptionRow::ShaderBackend => {
-            // OpenGL (0) and Vulkan (1); DirectX 12 is the desktop's, and a console is not one.
-            let next = i32::from(settings.get(SettingId::VideoBackend).as_int() != 1);
-            settings.set(SettingId::VideoBackend, SettingValue::Enum(next));
-        }
-        OptionRow::ShaderPreFilter(slot) => {
-            let choices: Vec<Option<&shader_panel::PreFilter>> = std::iter::once(None)
-                .chain(shader_panel::pre_filters().map(Some))
-                .collect();
-            let next = *cycled(&choices, &shader_panel::pre_filter_of(settings, slot), step);
-            shader_panel::set_pre_filter(settings, slot, next);
-        }
+        OptionRow::Shader(_)
+        | OptionRow::ShaderBackend
+        | OptionRow::ShaderPreFilter(_)
+        | OptionRow::ShaderOption(..) => step_shader_row(row, settings, step),
     }
     None
+}
+
+/// The rows of the preset page for preset `index`: the settings it proposes, then the reset
+/// row, which writes the preset again.
+#[must_use]
+pub fn preset_rows(index: usize) -> &'static [OptionRow] {
+    static ROWS: std::sync::LazyLock<Vec<Vec<OptionRow>>> = std::sync::LazyLock::new(|| {
+        crate::ui::presets::PRESETS
+            .iter()
+            .map(|preset| {
+                preset
+                    .values
+                    .iter()
+                    .filter(|&&(_, _, shown)| shown)
+                    .map(|&(id, ..)| preset_row(id))
+                    .chain(std::iter::once(OptionRow::Reset))
+                    .collect()
+            })
+            .collect()
+    });
+    &ROWS[index.min(ROWS.len() - 1)]
+}
+
+/// The console row of a setting a preset proposes: the interface's own row where it has one.
+const fn preset_row(id: SettingId) -> OptionRow {
+    match id {
+        SettingId::EmuPipeline => OptionRow::Pipeline,
+        SettingId::EmuLuaOptimized => OptionRow::LuaOptimized,
+        SettingId::EmuLuaExperimental => OptionRow::LuaExperimental,
+        SettingId::EmuPause3dIn2d => OptionRow::Pause3dIn2d,
+        SettingId::EmuCatchUpLast3d => OptionRow::CatchUpLast3d,
+        SettingId::VideoHalfRate3d => OptionRow::HalfRate3d,
+        SettingId::RenderShadow => OptionRow::Shadows,
+        id => OptionRow::Setting(id),
+    }
+}
+
+/// Whether the common default of hack option `key` is on (the packs' own value when unset).
+fn hack_default(stored: &str, key: &str) -> bool {
+    hack_options::common_value(stored, key).unwrap_or_else(|| {
+        hack_options::COMMON_OPTIONS
+            .iter()
+            .find(|&&(common, _)| common == key)
+            .is_some_and(|&(_, on)| on)
+    })
+}
+
+/// The settings a row of the global options changes, for its page's reset row.
+fn reset_ids(row: OptionRow) -> Vec<SettingId> {
+    match row {
+        OptionRow::Language => vec![SettingId::UiLanguage],
+        OptionRow::WidescreenOn => vec![SettingId::VideoWidescreen],
+        OptionRow::Signal => vec![SettingId::VideoCompositeSignal, SettingId::VideoSignalKind],
+        OptionRow::Setting(id) | OptionRow::Switch(id) | OptionRow::Choice(id) => vec![id],
+        OptionRow::ShaderBackend => vec![SettingId::VideoBackend],
+        OptionRow::Mode
+        | OptionRow::Preset
+        | OptionRow::HackDefault(_)
+        | OptionRow::Reset
+        | OptionRow::Shader(_)
+        | OptionRow::ShaderPreFilter(_)
+        | OptionRow::ShaderOption(..) => Vec::new(),
+        // The others are the rows a game may set too: the same settings.
+        row => super::game_options::row_settings(row).to_vec(),
+    }
+}
+
+/// The reset row of a page: its settings back to the chosen preset's values where it manages
+/// them, to their own defaults elsewhere; the common hack defaults dropped. On the preset page
+/// it writes the preset again.
+fn reset_page(rows: &[OptionRow], settings: &mut SettingsModel, preset: usize, on_preset: bool) {
+    if on_preset {
+        crate::ui::presets::choose(settings, preset);
+        return;
+    }
+    let ids: Vec<SettingId> = rows.iter().flat_map(|&row| reset_ids(row)).collect();
+    crate::ui::presets::reset_with(settings, &crate::ui::presets::PRESETS[preset], &ids);
+    if rows
+        .iter()
+        .any(|row| matches!(row, OptionRow::HackDefault(_)))
+    {
+        let stored = settings.get(SettingId::EmuHackOptions);
+        let text = hack_options::without_common(stored.as_text());
+        settings.set(SettingId::EmuHackOptions, SettingValue::Text(text));
+    }
+}
+
+/// Xnes3D+: the title of `page`: its plain name where it has one.
+#[must_use]
+pub fn page_title(page: OptionsPage) -> String {
+    super::plain::page_title(page).map_or_else(|| strings::get(page.title_key()), str::to_owned)
+}
+
+/// Xnes3D+: whether `row` holds something other than what its page's reset row would put back
+/// (the chosen preset's value for a setting the preset manages, the setting's own default for
+/// the others). None for a row that holds no setting of its own.
+#[must_use]
+pub fn is_changed(row: OptionRow, settings: &SettingsModel) -> Option<bool> {
+    if matches!(row, OptionRow::Reset | OptionRow::Preset | OptionRow::Mode) {
+        return None;
+    }
+    let ids = reset_ids(row);
+    if ids.is_empty() {
+        return None;
+    }
+    let preset = &crate::ui::presets::PRESETS[crate::ui::presets::chosen(settings)];
+    Some(ids.iter().any(|&id| {
+        let base = preset
+            .values
+            .iter()
+            .find(|&&(managed, ..)| managed == id)
+            .map_or_else(
+                || catalogue::descriptor(id).default_value().clone(),
+                |&(_, value, _)| value.value(),
+            );
+        settings.get(id) != base
+    }))
 }
 
 /// The label of `row`, in the language in force.
 #[must_use]
 pub fn label(row: OptionRow) -> String {
+    // Xnes3D+: the plain name first, where it has one.
+    if let Some(plain) = super::plain::label(row) {
+        return plain.to_owned();
+    }
     match row {
         OptionRow::Language => text::label_of(catalogue::descriptor(SettingId::UiLanguage)),
         OptionRow::Volume => text::label_of(catalogue::descriptor(SettingId::AudioVolume)),
@@ -823,6 +1431,7 @@ pub fn label(row: OptionRow) -> String {
         OptionRow::Pipeline => strings::get(keys::HANDHELD_OPTION_PIPELINE),
         OptionRow::Region => strings::get(keys::HANDHELD_OPTION_REGION),
         OptionRow::TouchPad => strings::get(keys::HANDHELD_OPTION_TOUCH_PAD),
+        OptionRow::Choice(id) | OptionRow::Switch(id) => text::label_of(catalogue::descriptor(id)),
         OptionRow::Setting(id) => super::advanced::label(id),
         OptionRow::Controls => strings::get(keys::HANDHELD_OPTION_CONTROLS),
         OptionRow::Achievements => strings::get(keys::TAB_ACHIEVEMENTS),
@@ -833,7 +1442,70 @@ pub fn label(row: OptionRow) -> String {
         OptionRow::Shader(slot) => shader_panel::slot_label(slot),
         OptionRow::ShaderPreFilter(_) => format!("  {}", strings::get("shaders.prefilter")),
         OptionRow::ShaderBackend => strings::get("shaders.backend"),
+        // Its text depends on the family the slot holds: `row_label`.
+        OptionRow::ShaderOption(..) => String::new(),
+        OptionRow::Mode => strings::get("options.new.mode"),
+        OptionRow::Preset => strings::get("options.new.preset_title"),
+        OptionRow::WidescreenOn => strings::get("options.new.widescreen_default"),
+        OptionRow::Signal => strings::get("options.new.signal"),
+        OptionRow::HackDefault(key) => strings::get(&format!("options.new.hack.{key}")),
+        OptionRow::Reset => strings::get(keys::BUTTON_RESET_DEFAULTS),
     }
+}
+
+/// The label of `row` with the settings at hand: a shader sub-option's depends on the family its
+/// slot holds; any other row's is [`label`]'s.
+#[must_use]
+pub fn row_label(row: OptionRow, settings: &SettingsModel) -> String {
+    match row {
+        OptionRow::ShaderOption(slot, index) => shader_option(settings, slot, index)
+            .map_or_else(String::new, |(label, _)| format!("  {label}")),
+        row => label(row),
+    }
+}
+
+/// The label and the value of sub-option `index` of the family `slot` holds.
+fn shader_option(
+    settings: &SettingsModel,
+    slot: ShaderSlot,
+    index: u8,
+) -> Option<(String, String)> {
+    let state = crate::ui::shader_looks::state_of(settings, slot)?;
+    let option = *crate::ui::shader_looks::sub_options(&state).get(usize::from(index))?;
+    Some(crate::ui::shader_looks::sub_option_text(&state, option))
+}
+
+/// The rows of the shaders page for `settings`: the graphics API and the resolution, then each
+/// slot, its pre-filter and the sub-options of its family when it holds a preset, then the reset
+/// row (lot REWRITE-UI).
+#[must_use]
+pub fn shader_rows(settings: &SettingsModel) -> Vec<OptionRow> {
+    let mut rows = vec![
+        OptionRow::ShaderBackend,
+        OptionRow::Setting(SettingId::VideoShaderResolution),
+    ];
+    for slot in [
+        ShaderSlot::TwoD,
+        ShaderSlot::TwoDWide,
+        ShaderSlot::ThreeD,
+        ShaderSlot::ThreeDWide,
+    ] {
+        rows.push(OptionRow::Shader(slot));
+        if settings.get(slot.ids().mode).as_int() != zax_settings::shader_slots::PRESET {
+            continue;
+        }
+        rows.push(OptionRow::ShaderPreFilter(slot));
+        if let Some(state) = crate::ui::shader_looks::state_of(settings, slot) {
+            let count = crate::ui::shader_looks::sub_options(&state).len();
+            rows.extend(
+                (0..count)
+                    .filter_map(|index| u8::try_from(index).ok())
+                    .map(|index| OptionRow::ShaderOption(slot, index)),
+            );
+        }
+    }
+    rows.push(OptionRow::Reset);
+    rows
 }
 
 /// The value of `row` as the screen shows it; empty for a row that opens a list.
@@ -880,12 +1552,45 @@ pub fn value_text(row: OptionRow, settings: &SettingsModel, camera: CameraPreset
             RegionChoice::Ntsc => "NTSC".to_owned(),
             RegionChoice::Pal => "PAL".to_owned(),
         },
+        OptionRow::Choice(id) => choice_text(id, settings),
         OptionRow::TouchPad => match touch_pad(settings) {
             0 => strings::get(keys::HANDHELD_TOUCH_PAD_OFF),
             1 => strings::get(keys::HANDHELD_TOUCH_PAD_ON),
             _ => text::label_of_option("Auto"),
         },
-        OptionRow::Controls | OptionRow::Page(_) | OptionRow::Group(_) => String::new(),
+        OptionRow::Controls | OptionRow::Page(_) | OptionRow::Group(_) | OptionRow::Reset => {
+            String::new()
+        }
+        OptionRow::Mode => strings::get(if crate::ui::presets::advanced(settings) {
+            "options.new.mode.advanced"
+        } else {
+            "options.new.mode.simple"
+        }),
+        OptionRow::Preset => {
+            let chosen = crate::ui::presets::chosen(settings);
+            let name = crate::ui::presets::name(chosen);
+            if crate::ui::presets::matches(settings, &crate::ui::presets::PRESETS[chosen]) {
+                name
+            } else {
+                format!("{name} {}", strings::get("options.new.modified"))
+            }
+        }
+        OptionRow::WidescreenOn => switch(settings.get(SettingId::VideoWidescreen).as_int() != 0),
+        OptionRow::Signal => {
+            if settings.get(SettingId::VideoCompositeSignal).as_bool() {
+                let kind = settings.get(SettingId::VideoSignalKind).as_int();
+                text::label_of_option(
+                    ["Composite", "S-Video", "RF"][usize::try_from(kind.clamp(0, 2)).unwrap_or(0)],
+                )
+            } else {
+                strings::get("options.new.signal.off")
+            }
+        }
+        OptionRow::Switch(id) => switch(settings.get(id).as_bool()),
+        OptionRow::HackDefault(key) => switch(hack_default(
+            settings.get(SettingId::EmuHackOptions).as_text(),
+            key,
+        )),
         OptionRow::Setting(id) => super::advanced::value_text(id, settings),
         OptionRow::Achievements => switch(settings.get(SettingId::AchievementsEnabled).as_bool()),
         OptionRow::Android(action) => android_value(action, settings),
@@ -894,6 +1599,9 @@ pub fn value_text(row: OptionRow, settings: &SettingsModel, camera: CameraPreset
         }
         OptionRow::ShaderPreFilter(slot) => {
             shader_panel::pre_filter_label(shader_panel::pre_filter_of(settings, slot))
+        }
+        OptionRow::ShaderOption(slot, index) => {
+            shader_option(settings, slot, index).map_or_else(String::new, |(_, value)| value)
         }
         OptionRow::ShaderBackend => strings::get(if !cfg!(feature = "wgpu") {
             "shaders.backend.not_built"
@@ -917,6 +1625,23 @@ pub fn value_text(row: OptionRow, settings: &SettingsModel, camera: CameraPreset
 pub fn forced_run_ahead_note(row: OptionRow, forced: bool) -> Option<String> {
     (forced && row == OptionRow::Setting(SettingId::EmuRunAhead))
         .then(|| strings::get(keys::HANDHELD_RUN_AHEAD_FORCED))
+}
+
+/// Why `row` is locked on the console: it is a control only Zaxnes's own engine has (the
+/// widescreen, the hack packs, the sprite limit, the run-ahead) and another engine is chosen in
+/// `model`. The same list as the desktop window's, `ui::options::engine_reason`.
+#[must_use]
+pub fn engine_lock(row: OptionRow, model: &SettingsModel) -> Option<&'static str> {
+    match row {
+        OptionRow::Setting(id) => crate::ui::options::engine_reason(id, model),
+        _ => None,
+    }
+}
+
+/// The note a console row shows after its value while [`engine_lock`] locks it.
+#[must_use]
+pub fn engine_lock_note(row: OptionRow, model: &SettingsModel) -> Option<String> {
+    engine_lock(row, model).map(|_| strings::get(keys::HANDHELD_ZAXNES_ONLY))
 }
 
 /// The name of a camera preset, in the language in force.
@@ -1026,9 +1751,85 @@ fn set_render_scale(settings: &mut SettingsModel, step: i32) {
     });
 }
 
+/// Sets the video signal to choice `chosen` of its list: off, composite, S-Video, RF (lot
+/// REWRITE-UI).
+pub fn signal_choose(model: &mut SettingsModel, chosen: usize) {
+    model.set(
+        SettingId::VideoCompositeSignal,
+        SettingValue::Bool(chosen > 0),
+    );
+    if chosen > 0 {
+        let kind = i32::try_from(chosen - 1).unwrap_or(0);
+        model.set(SettingId::VideoSignalKind, SettingValue::Enum(kind));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Settings in the advanced mode, the one whose tree these tests walk (lot REWRITE-UI: a
+    /// fresh model opens the simple one).
+    fn advanced_settings() -> SettingsModel {
+        let mut settings = SettingsModel::new();
+        settings.set(SettingId::UiOptionsAdvanced, SettingValue::Bool(true));
+        settings
+    }
+
+    /// Lot REWRITE-UI: the simple mode's main page, the mode row switching to the advanced one,
+    /// the preset row writing its preset and the reset row keeping it.
+    #[test]
+    fn the_simple_mode_switches_and_the_preset_and_reset_rows_act() {
+        let mut settings = SettingsModel::new();
+        let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
+        assert_eq!(HandheldOptionsModel::simple_main_rows(), model.rows());
+        assert_eq!(OptionRow::Mode, model.selected());
+        model.handle(PadButton::A, &mut settings);
+        assert!(crate::ui::presets::advanced(&settings));
+        assert_eq!(HandheldOptionsModel::main_rows(), model.rows());
+        model.handle(PadButton::A, &mut settings);
+        assert!(!crate::ui::presets::advanced(&settings));
+
+        // The preset row: right writes the next preset.
+        model.handle(PadButton::Down, &mut settings);
+        assert_eq!(OptionRow::Preset, model.selected());
+        model.handle(PadButton::Left, &mut settings);
+        let chosen = crate::ui::presets::chosen(&settings);
+        assert_eq!(1, chosen);
+        assert!(crate::ui::presets::matches(
+            &settings,
+            &crate::ui::presets::PRESETS[chosen]
+        ));
+
+        // A setting the preset manages, changed, then the reset row of its page.
+        settings.set(SettingId::EmuRunAhead, SettingValue::Int(3));
+        settings.set(SettingId::EmuRainbowNetwork, SettingValue::Bool(true));
+        let rows = SIMPLE_EMULATION_ROWS;
+        reset_page(&rows, &mut settings, chosen, false);
+        assert_eq!(
+            1,
+            settings.get(SettingId::EmuRunAhead).as_int(),
+            "the preset's value"
+        );
+        assert_eq!(
+            SettingsModel::new().get(SettingId::EmuRainbowNetwork),
+            settings.get(SettingId::EmuRainbowNetwork),
+            "the setting's own default"
+        );
+        assert_eq!(1, crate::ui::presets::chosen(&settings), "the preset stays");
+    }
+
+    /// The preset page shows what each preset proposes, then the reset row.
+    #[test]
+    fn the_preset_page_shows_the_proposed_settings() {
+        for (index, preset) in crate::ui::presets::PRESETS.iter().enumerate() {
+            let rows = preset_rows(index);
+            let shown = preset.values.iter().filter(|&&(_, _, shown)| shown).count();
+            assert_eq!(shown + 1, rows.len());
+            assert_eq!(Some(&OptionRow::Reset), rows.last());
+        }
+    }
 
     /// The pages to open to reach `row`, outermost first; none for a row of no page.
     fn path_to(row: OptionRow) -> Option<Vec<OptionsPage>> {
@@ -1053,25 +1854,34 @@ mod tests {
 
     /// Walks to `row` wherever it is in the tree: out to the main page, then down its path.
     fn go_to(model: &mut HandheldOptionsModel, row: OptionRow, settings: &mut SettingsModel) {
+        model.sync(settings);
         while model.page().is_some() {
             model.handle(PadButton::B, settings);
         }
         let path = path_to(row).expect("a reachable row");
         for page in path {
-            while model.selected() != OptionRow::Page(page) {
-                model.handle(PadButton::Down, settings);
-            }
+            down_to(model, OptionRow::Page(page), settings);
             model.handle(PadButton::A, settings);
         }
-        while model.selected() != row {
+        down_to(model, row, settings);
+    }
+
+    /// Presses Down until `row` is selected; a row the page has not got fails rather than loops.
+    fn down_to(model: &mut HandheldOptionsModel, row: OptionRow, settings: &mut SettingsModel) {
+        for _ in 0..256 {
+            if model.selected() == row {
+                return;
+            }
             model.handle(PadButton::Down, settings);
         }
+        panic!("{row:?} is not on the page");
     }
 
     #[test]
     fn the_optimizations_page_opens_and_goes_back_to_its_row() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         let row = OptionRow::Page(OptionsPage::Optimizations);
         go_to(&mut model, row, &mut settings);
         assert_eq!(None, model.handle(PadButton::A, &mut settings));
@@ -1090,16 +1900,15 @@ mod tests {
     /// *Enhanced effects* — open one at a time, and B climbs back to the row that opened each.
     #[test]
     fn ro_3_the_three_levels_open_and_b_climbs_back_one_at_a_time() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         for page in [
             OptionsPage::Advanced,
             OptionsPage::Rendering3d,
             OptionsPage::EnhancedEffects,
         ] {
-            while model.selected() != OptionRow::Page(page) {
-                model.handle(PadButton::Down, &mut settings);
-            }
+            down_to(&mut model, OptionRow::Page(page), &mut settings);
             assert_eq!(None, model.handle(PadButton::A, &mut settings));
             assert_eq!(Some(page), model.page());
         }
@@ -1113,7 +1922,7 @@ mod tests {
         );
         assert_eq!(MAX_DEPTH, model.path().len(), "the tree is three deep");
         // A fourth level does not exist, and asking for one changes nothing.
-        let before = model;
+        let before = model.clone();
         model.handle(PadButton::A, &mut settings);
         assert_eq!(Some(OptionsPage::EnhancedEffects), model.page());
 
@@ -1137,7 +1946,7 @@ mod tests {
     /// the tree that has one, and no page is nothing but titles.
     #[test]
     fn ro_3_a_group_title_is_never_selected() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         for page in OptionsPage::ALL {
             let rows = page.rows();
             assert!(
@@ -1178,8 +1987,9 @@ mod tests {
             path_to(row),
             "it is on the Optimisations page and nowhere else"
         );
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         go_to(&mut model, row, &mut settings);
         let before = settings.get(SettingId::EmuLuaSmoothGc).as_bool();
         model.handle(PadButton::A, &mut settings);
@@ -1210,7 +2020,7 @@ mod tests {
 
     #[test]
     fn the_region_row_cycles_auto_ntsc_and_pal() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         settings.set_auto_tv_mode(true);
         let mut model = HandheldOptionsModel::new();
         go_to(&mut model, OptionRow::Region, &mut settings);
@@ -1232,8 +2042,9 @@ mod tests {
 
     #[test]
     fn the_volume_steps_by_ten_percent_and_stops_at_the_ends() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         go_to(&mut model, OptionRow::Volume, &mut settings);
         model.handle(PadButton::Right, &mut settings);
         assert_eq!(100, volume_percent(settings.volume()));
@@ -1248,8 +2059,9 @@ mod tests {
 
     #[test]
     fn the_render_scale_row_switches_the_render_method_with_it() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         go_to(&mut model, OptionRow::RenderScale, &mut settings);
         assert_eq!(0, render_scale_index(&settings));
         model.handle(PadButton::Right, &mut settings);
@@ -1278,8 +2090,9 @@ mod tests {
 
     #[test]
     fn switches_and_the_frame_cap_toggle() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         go_to(&mut model, OptionRow::Shadows, &mut settings);
         let shadows = settings.shadow();
         model.handle(PadButton::A, &mut settings);
@@ -1298,9 +2111,9 @@ mod tests {
 
     #[test]
     fn the_language_row_cycles_the_catalogue_languages() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
-        assert_eq!(OptionRow::Language, model.selected());
+        go_to(&mut model, OptionRow::Language, &mut settings);
         model.handle(PadButton::Right, &mut settings);
         assert_eq!("fr", settings.language());
         model.handle(PadButton::Right, &mut settings);
@@ -1309,8 +2122,9 @@ mod tests {
 
     #[test]
     fn the_camera_and_controls_rows_ask_the_application() {
-        let mut settings = SettingsModel::new();
+        let mut settings = advanced_settings();
         let mut model = HandheldOptionsModel::new();
+        model.sync(&settings);
         go_to(&mut model, OptionRow::Camera, &mut settings);
         assert_eq!(
             Some(OptionsCommand::StepCamera(-1)),

@@ -77,8 +77,44 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
     /// the widescreen of the game is on (owner request: off, the game starts as it was made).
     #[must_use]
     pub fn builtin_patches_wanted(&self) -> bool {
-        self.settings.get(SettingId::EmuBuiltinPatches).as_bool()
+        !self.widescreen_held_off()
+            && self.settings.get(SettingId::EmuBuiltinPatches).as_bool()
             && self.settings.get(SettingId::VideoWidescreen).as_int() != 0
+    }
+
+    /// Holds the widescreen off, or lets it go back to what the settings say, without writing
+    /// them (owner request: the portrait screen is too narrow for it). The game in play switches
+    /// at once when its hack pack carries its states across, as for a change of the settings.
+    pub fn set_widescreen_held_off(&mut self, held: bool) {
+        if held != self.widescreen_held_off {
+            self.widescreen_held_off = held;
+            self.follow_patch_switch();
+        }
+    }
+
+    /// Whether the widescreen is held off ([`Self::set_widescreen_held_off`]), or the machine
+    /// kept plain for a `.bk2` ([`Self::plain_for_bk2`]).
+    #[must_use]
+    pub fn widescreen_held_off(&self) -> bool {
+        self.widescreen_held_off || self.plain_for_bk2()
+    }
+
+    /// Whether a BizHawk `.bk2` is being set up or played on the NesHawk engine: the machine is
+    /// then the one the movie was recorded on — no built-in patch, no aid, no widescreen margin,
+    /// so no widescreen extension at all (lot NESHAWK-HACKS). Before that lot NesHawk ignored them
+    /// all; a game with its widescreen on would otherwise load patched and the movie part at once.
+    /// Over as soon as the movie stops; the patch comes back with the next load.
+    #[must_use]
+    pub fn plain_for_bk2(&self) -> bool {
+        self.bk2_loading
+            || self.session.as_ref().is_some_and(|session| {
+                session.has_movie()
+                    && session.core().kind() == zax_core_api::EngineKind::NesHawk
+                    && self
+                        .movie_file
+                        .as_deref()
+                        .is_some_and(super::bk2_movies::is_bk2)
+            })
     }
 
     /// Whether the advanced mode of the game's widescreen is on (its patch, when the patch is an

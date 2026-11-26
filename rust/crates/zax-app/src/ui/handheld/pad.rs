@@ -39,10 +39,14 @@ pub enum PadButton {
     L3,
     /// Xnes3D+: the right stick pressed in.
     R3,
+    /// A screenful of rows up (the keyboard's Page Up, owner request).
+    PageUp,
+    /// A screenful of rows down (the keyboard's Page Down).
+    PageDown,
 }
 
 impl PadButton {
-    const COUNT: usize = 17;
+    const COUNT: usize = 19;
 
     pub const ALL: [Self; Self::COUNT] = [
         Self::Up,
@@ -62,6 +66,8 @@ impl PadButton {
         Self::R2,
         Self::L3,
         Self::R3,
+        Self::PageUp,
+        Self::PageDown,
     ];
 
     const fn index(self) -> usize {
@@ -69,7 +75,10 @@ impl PadButton {
     }
 
     const fn repeats(self) -> bool {
-        matches!(self, Self::Up | Self::Down | Self::Left | Self::Right)
+        matches!(
+            self,
+            Self::Up | Self::Down | Self::Left | Self::Right | Self::PageUp | Self::PageDown
+        )
     }
 }
 

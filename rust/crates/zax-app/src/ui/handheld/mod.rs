@@ -20,9 +20,11 @@ pub mod options;
 pub mod overlay;
 pub mod overscan;
 pub mod pad;
+pub mod plain;
 pub mod pointer;
 pub mod profile_list;
 pub mod rom_list;
+pub mod setup;
 pub mod states;
 
 use std::cell::{Cell, RefCell};
@@ -65,6 +67,23 @@ pub const CAPTURE_SECONDS: f32 = 5.0;
 
 /// The texture id of the thumbnail the save state screen shows.
 pub const STATE_PICTURE_ID: usize = FIRST_PICTURE_ID;
+/// Xnes3D+: the texture ids of the selected game's box art, its picture and its cartridge.
+pub const COVER_PICTURE_ID: usize = FIRST_PICTURE_ID + 1;
+pub const SHOT_PICTURE_ID: usize = FIRST_PICTURE_ID + 2;
+pub const CART_PICTURE_ID: usize = FIRST_PICTURE_ID + 3;
+
+/// Xnes3D+: the media of the game the list rests on, as uploaded for the drawing.
+#[derive(Debug, Clone, Default)]
+pub struct ShownMedia {
+    /// The ROM they are of.
+    pub path: PathBuf,
+    /// The size of each picture uploaded, none when the game has not got it.
+    pub cover: Option<(u32, u32)>,
+    pub shot: Option<(u32, u32)>,
+    pub cart: Option<(u32, u32)>,
+    /// What its information file says.
+    pub info: Option<crate::game_media::GameInfo>,
+}
 
 /// The screen in front.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +116,10 @@ pub enum Screen {
     AchievementGrid,
     /// The game itself, with no interface.
     InGame,
+    /// Xnes3D+: the box art and information of one game, from the list (R2).
+    GameInfo,
+    /// Xnes3D+: the setup of the first start (Android).
+    Setup,
 }
 
 /// The list of the bindings and the capture in progress.
@@ -113,6 +136,15 @@ struct ControlsState {
 
 /// Xnes3D+: how long presses are ignored once a capture ends.
 const AFTER_CAPTURE_SECONDS: f32 = 0.3;
+/// A list scrolled away from its selection (owner request).
+#[derive(Debug, Clone, Copy, Default)]
+struct ListScroll {
+    /// The first row the scrollbar, the wheel or a finger scrolled the list to; none while the
+    /// list follows its selection, which any press of the pad brings back.
+    first: Option<usize>,
+    /// Whether the pointer holds the scrollbar.
+    dragging: bool,
+}
 
 /// The handheld interface.
 pub struct HandheldUi {
@@ -140,6 +172,14 @@ pub struct HandheldUi {
     overscan: OverscanModel,
     keys: KeyConfigModel,
     combo: ExitCombo,
+    /// Seconds until the next look for a game another application asked for
+    /// (`launch_request`).
+    launch_wait: f32,
+    /// The ROM another application asked for and wants to have back on quitting it.
+    /// Xnes3D+: never read, because "Quit to game list" always goes to the game list (owner
+    /// request) and the Android side never writes Zaxnes' request file (Xnes3D+ has its own).
+    #[allow(dead_code)]
+    return_on_quit: Option<std::path::PathBuf>,
     metrics: Metrics,
     heading_font: Option<imgui::FontId>,
     effects: Vec<UiEffect>,
@@ -160,6 +200,14 @@ pub struct HandheldUi {
     shown_picture: Option<(i32, i64, bool)>,
     /// The changes of the pictures, for the renderer.
     pictures: Vec<PictureUpdate>,
+    /// Xnes3D+: the media of the selected game, once read.
+    media: Option<ShownMedia>,
+    /// Xnes3D+: the game being started and how long its cartridge animation has run, in
+    /// seconds, while it runs.
+    launch_animation: Option<(String, f32)>,
+    /// Xnes3D+: the first start's setup, and whether it was looked for yet.
+    setup: setup::SetupModel,
+    setup_checked: bool,
     /// Whether the host waits for an answer to a question, which the interface then asks.
     confirming: bool,
     /// Where the save state screen goes back to: the in-game menu, or the game when a shortcut
@@ -173,6 +221,13 @@ pub struct HandheldUi {
     body_font: Option<imgui::FontId>,
     /// Where the rows and the hints of the last drawn screen lie, for the mouse.
     zones: RefCell<Vec<Zone>>,
+    /// The rank of the selected row of the list drawn last, for the clicks.
+    focus_rank: Cell<Option<usize>>,
+    /// The rows the list drawn last shows and how many a selection can rest on: a page of
+    /// Page Up and Page Down.
+    list_span: Cell<(usize, usize)>,
+    /// The list scrolled by its scrollbar, the wheel or a finger (owner request).
+    scroll: ListScroll,
     /// How many lines the bar of hints took at the last drawing.
     hint_lines: Cell<u8>,
     /// The RetroAchievements screen.
@@ -183,6 +238,9 @@ pub struct HandheldUi {
     /// go (known once drawn).
     list_scroll: f32,
     list_scroll_max: Cell<f32>,
+    /// The first row of the in-game menu shown when it is taller than the screen (owner
+    /// request: a small window, or a page under its browser's bars, scrolls it).
+    overlay_first: Cell<usize>,
     /// The grid of a game's achievements, while it shows, and the screen it goes back to.
     grid: Option<(achievement_grid::AchievementGridModel, Screen)>,
 }
@@ -210,6 +268,8 @@ enum HeadOn {
     Shown,
 }
 
+/// How often the console interface looks for a game another application asked for.
+const LAUNCH_CHECK_SECONDS: f32 = 0.5;
 /// How long L2 is held to keep the camera, and Y to see the game in 2D from the front.
 const CAMERA_KEEP_SECONDS: f32 = 0.6;
 /// How long the widescreen button is held before its settings open.
@@ -251,6 +311,8 @@ impl HandheldUi {
             controls: ControlsState::default(),
             keys: KeyConfigModel::new(),
             combo: ExitCombo::new(),
+            launch_wait: 0.0,
+            return_on_quit: None,
             metrics: Metrics::for_height(height),
             heading_font: None,
             effects: Vec::new(),
@@ -266,14 +328,22 @@ impl HandheldUi {
             fixed_metrics: None,
             body_font: None,
             shown_picture: None,
+            media: None,
+            launch_animation: None,
+            setup: setup::SetupModel::default(),
+            setup_checked: false,
             pictures: Vec::new(),
             confirming: false,
             zones: RefCell::new(Vec::new()),
+            focus_rank: Cell::new(None),
+            list_span: Cell::new((0, 0)),
+            scroll: ListScroll::default(),
             hint_lines: Cell::new(1),
             achievements: AchievementsModel::new(),
             keyboard: None,
             list_scroll: 0.0,
             list_scroll_max: Cell::new(0.0),
+            overlay_first: Cell::new(0),
             grid: None,
         };
         ui.refresh_roms(host);
@@ -369,7 +439,11 @@ impl HandheldUi {
         self.library = ProfileChooserModel::new(host.games().library())
             .all()
             .to_vec();
-        let mut entries = rom_list::scan(&self.roms_directory);
+        // Web build: the games of the pages of games, downloaded when played (owner request).
+        let mut entries = rom_list::with_remote_games(
+            rom_list::scan(&self.roms_directory),
+            &crate::web_bridge::remote_games(),
+        );
         // The widescreen of the games without one of their own: the global value.
         let mut global = host.settings().clone();
         global.clear_session_layer();
@@ -377,6 +451,13 @@ impl HandheldUi {
         let global_on = global.get(SettingId::VideoWidescreen).as_int() != 0;
         for entry in &mut entries {
             entry.profile = self.profile_of(host, entry);
+            if entry.remote.is_some() {
+                // No file to study nor options of its own yet: its widescreen is the name's.
+                entry.widescreen_other = hacks::other_rom_patch(entry.profile_title(), &entry.name)
+                    .map(|patch| patch.name);
+                entry.widescreen_unstudied = entry.widescreen_other.is_some();
+                continue;
+            }
             Self::find_widescreen(host, entry);
             entry.widescreen_on = host
                 .game_options(&entry.path.to_string_lossy())
@@ -389,9 +470,30 @@ impl HandheldUi {
                 .as_ref()
                 .is_some_and(|profile| host.is_favorite(&profile.id));
         }
+        // Xnes3D+: the favourites first, each part still in alphabetical order.
+        entries.sort_by_key(|entry| !entry.favorite);
         // REQ-LOOP-076: the Resume entry heads the enumeration of the games.
         if let Some(game) = host.resume_game_title() {
-            entries.insert(0, RomEntry::resume_row(&game));
+            let mut row = RomEntry::resume_row(&game);
+            // Xnes3D+ (owner request): the row carries the game's ROM, so the panel shows its
+            // box art. Else the ROM of the list's game with the same profile.
+            let resumed = host.resume_point().map(|point| point.game_id.clone());
+            row.path = host
+                .resume_rom_path()
+                .map(PathBuf::from)
+                .or_else(|| {
+                    entries
+                        .iter()
+                        .find(|entry| {
+                            entry
+                                .profile
+                                .as_ref()
+                                .is_some_and(|profile| Some(&profile.id) == resumed.as_ref())
+                        })
+                        .map(|entry| entry.path.clone())
+                })
+                .unwrap_or_default();
+            entries.insert(0, row);
         }
         self.roms.replace(entries);
     }
@@ -452,6 +554,11 @@ impl HandheldUi {
                     .into_iter()
                     .next()
             })?;
+        // Xnes3D+ (owner request): the "3D by default" entry is Smart 3D, so the list shows it
+        // as a game with no profile, "Smart 3D", and not as a profile of its own.
+        if choice.is_default_three_d {
+            return None;
+        }
         Some(ProfileMatch {
             id: choice.id.clone(),
             title: choice.title.clone(),
@@ -492,6 +599,10 @@ impl HandheldUi {
                 }
             }
             Command::ShowOptions => self.open_options(host),
+            // Web build: the page's own dialogue (prepackaged ROMs, drop, the player's files).
+            Command::OpenRom if crate::web_bridge::active() => {
+                crate::web_bridge::request_open_dialog();
+            }
             other => self.effects.push(UiEffect::Log(format!(
                 "the handheld interface has nothing to do for '{}'.",
                 other.name()
@@ -505,13 +616,22 @@ impl HandheldUi {
             frame.host.launch_rom_with_profile(&rom, &id);
         }
         self.confirming = frame.host.pending_confirmation().is_some();
+        self.take_launch_request(seconds, frame.host);
         self.follow_the_game(frame.host);
         self.update_combo(pad, seconds, frame.host);
+        // A capture that ends this frame ended on the press that was bound: that press, sampled
+        // before this update, is not a press of the screen as well (B would leave the list, A
+        // start another capture). The screen's own guard cannot see it, the capture being over.
+        let capturing = self.screen == Screen::Controls && self.controls.capture_left.is_some();
         self.update_capture(seconds, frame);
+        let capture_ended = capturing && self.controls.capture_left.is_none();
         self.update_camera_memory(pad, seconds, frame.host);
         self.update_flat_view(pad, seconds, frame.host);
         self.update_widescreen_hold(pad, seconds, frame.host);
         self.update_resting_study(seconds, frame.host);
+        if capture_ended {
+            return;
+        }
         let presses: Vec<PadButton> = pad.presses().collect();
         self.pad_l3_r3 = pad.is_held(PadButton::L3) && pad.is_held(PadButton::R3);
         for button in presses.iter().copied() {
@@ -581,12 +701,77 @@ impl HandheldUi {
     /// drawn last frame, as presses of the pad. Nothing in game.
     pub fn update_pointer(&mut self, input: &PointerInput, frame: &mut UiFrame<'_>) {
         if self.screen == Screen::InGame && frame.host.pending_confirmation().is_none() {
+            self.scroll.dragging = false;
             return;
         }
-        let presses = pointer::presses(&self.zones.borrow(), input);
+        // The scrollbar of the list (owner request): grabbed, it scrolls the list as long as it
+        // is held, and selects nothing; let go, it presses nothing either.
+        let bar = self
+            .zones
+            .borrow()
+            .iter()
+            .find(|zone| matches!(zone.action, pointer::ZoneAction::Scrollbar { .. }))
+            .copied();
+        if self.scroll.dragging {
+            if input.button == pointer::Hold::Up {
+                self.scroll.dragging = false;
+            } else if let Some(first) =
+                bar.and_then(|bar| pointer::scrolled_first(&bar, input.position[1]))
+            {
+                self.scroll.first = Some(first);
+            }
+            return;
+        }
+        if input.button == pointer::Hold::Pressed {
+            if let Some(bar) = bar.filter(|bar| bar.contains(input.position)) {
+                self.scroll.dragging = true;
+                self.scroll.first = pointer::scrolled_first(&bar, input.position[1]);
+                return;
+            }
+        }
+        // The wheel and a finger's slide scroll the list too, without moving its selection.
+        let mut input = *input;
+        if let Some(pointer::Zone {
+            action: pointer::ZoneAction::Scrollbar { first, rows, total },
+            ..
+        }) = bar
+        {
+            #[allow(clippy::cast_possible_truncation)] // a few notches
+            let notches = input.wheel.round() as i64;
+            if notches != 0 {
+                let last = i64::try_from(total.saturating_sub(rows)).unwrap_or(0);
+                let first = i64::try_from(first).unwrap_or(0);
+                let next = (first - notches).clamp(0, last);
+                self.scroll.first = usize::try_from(next).ok();
+            }
+            input.wheel = 0.0;
+        } else {
+            // The in-game menu has no scrollbar: the wheel and a finger's slide move its
+            // selection, the rows it shows following it when it is taller than the screen.
+            #[allow(clippy::cast_possible_truncation)] // a few notches
+            let notches = input.wheel.round() as i64;
+            if self.screen == Screen::Overlay && notches != 0 {
+                let button = if notches > 0 {
+                    PadButton::Up
+                } else {
+                    PadButton::Down
+                };
+                for _ in 0..notches.unsigned_abs() {
+                    self.press(button, frame);
+                }
+            }
+            input.wheel = 0.0;
+        }
+        let presses = pointer::presses(&self.zones.borrow(), &input, self.focus_rank.get());
         for button in presses {
             self.press(button, frame);
         }
+    }
+
+    /// Whether the pointer holds the scrollbar of a list: a finger doing so does not swipe.
+    #[must_use]
+    pub const fn scroll_dragging(&self) -> bool {
+        self.scroll.dragging
     }
 
     /// The list resting [`STUDY_AFTER_SECONDS`] on a game not studied yet studies its ROM (owner
@@ -696,6 +881,59 @@ impl HandheldUi {
         }
     }
 
+    /// Xnes3D+: the box art, picture, cartridge and information of the game the list rests on,
+    /// read again when the selection moves to another game.
+    fn follow_the_media(&mut self, host: &AppHost) {
+        if !matches!(self.screen, Screen::Home | Screen::GameInfo) {
+            return;
+        }
+        let Some(path) = self
+            .roms
+            .selected_entry()
+            // Xnes3D+: the Resume row too, through the ROM it carries (owner request).
+            .filter(|entry| entry.remote.is_none() && !entry.path.as_os_str().is_empty())
+            .map(|entry| entry.path.clone())
+        else {
+            return;
+        };
+        if self.media.as_ref().is_some_and(|media| media.path == path) {
+            return;
+        }
+        let root = host.paths().root.clone();
+        let mut shown = ShownMedia {
+            path: path.clone(),
+            info: crate::game_media::info(&root, &path),
+            ..ShownMedia::default()
+        };
+        for (which, id) in [
+            (crate::game_media::Picture::Box, COVER_PICTURE_ID),
+            (crate::game_media::Picture::Shot, SHOT_PICTURE_ID),
+            (crate::game_media::Picture::Cart, CART_PICTURE_ID),
+        ] {
+            let picture = crate::game_media::picture(&root, &path, which);
+            let size = picture.as_ref().map(|picture| (picture.width, picture.height));
+            match which {
+                crate::game_media::Picture::Box => shown.cover = size,
+                crate::game_media::Picture::Shot => shown.shot = size,
+                crate::game_media::Picture::Cart => shown.cart = size,
+            }
+            self.pictures.push(PictureUpdate { id, picture });
+        }
+        self.media = Some(shown);
+    }
+
+    /// Xnes3D+: the media read for the selected game, if they are its.
+    #[must_use]
+    pub fn media(&self) -> Option<&ShownMedia> {
+        let path = &self.roms.selected_entry()?.path;
+        self.media.as_ref().filter(|media| &media.path == path)
+    }
+
+    /// Xnes3D+: forgets the media read, so they are read again (Android wrote new ones).
+    pub fn forget_media(&mut self) {
+        self.media = None;
+    }
+
     /// The thumbnail of the slot selected on the save state screen, read again when the
     /// selection or the slot's state changes.
     fn follow_the_state_picture(&mut self, host: &AppHost) {
@@ -795,6 +1033,38 @@ impl HandheldUi {
         }
     }
 
+    /// A game another application asked for (an Android frontend): played at once, in place
+    /// of the one playing. Looked for twice a second.
+    fn take_launch_request(&mut self, seconds: f32, host: &mut AppHost) {
+        self.launch_wait -= seconds;
+        if self.launch_wait > 0.0 {
+            return;
+        }
+        self.launch_wait = LAUNCH_CHECK_SECONDS;
+        let Some(request) = crate::launch_request::take(&host.paths().root) else {
+            return;
+        };
+        crate::app_log::line(&format!("launch request: {}", request.rom.display()));
+        self.return_on_quit = request.return_on_quit.then(|| request.rom.clone());
+        // Played as from the list: the profile that matches it, else in 2D.
+        if self.library.is_empty() {
+            self.refresh_roms(host);
+        }
+        let entry = RomEntry::new(request.rom);
+        let profile = self
+            .profile_of(host, &entry)
+            .map(|profile| profile.id)
+            .or_else(|| host.games().two_dimensional_mode_id());
+        let rom = entry.path.to_string_lossy();
+        match profile {
+            Some(id) => host.launch_rom_with_profile(&rom, &id),
+            None => host.enqueue(Command::OpenRom, CommandArgs::of_text(&rom)),
+        }
+        if matches!(self.screen, Screen::Overlay | Screen::States) {
+            self.screen = Screen::InGame;
+        }
+    }
+
     /// A binding that waits too long is given up.
     fn update_capture(&mut self, seconds: f32, frame: &mut UiFrame<'_>) {
         self.controls.after_capture = (self.controls.after_capture - seconds).max(0.0);
@@ -812,7 +1082,43 @@ impl HandheldUi {
         }
     }
 
+    /// A screenful of rows (owner request): that many presses of up or down, stopping at the
+    /// list's ends rather than going round.
+    fn press_page(&mut self, button: PadButton, frame: &mut UiFrame<'_>) {
+        let (rows, count) = self.list_span.get();
+        let focus = self.focus_rank.get().unwrap_or(0);
+        let room = rows.saturating_sub(1).max(1);
+        let (step, presses) = if button == PadButton::PageUp {
+            (PadButton::Up, room.min(focus))
+        } else {
+            (
+                PadButton::Down,
+                room.min(count.saturating_sub(1).saturating_sub(focus)),
+            )
+        };
+        for _ in 0..presses {
+            self.press(step, frame);
+        }
+        // The rank the presses reached, for a second page before the next drawing.
+        self.focus_rank.set(Some(if button == PadButton::PageUp {
+            focus - presses
+        } else {
+            focus + presses
+        }));
+    }
+
     fn press(&mut self, button: PadButton, frame: &mut UiFrame<'_>) {
+        // A press brings the list back round its selection (a scrolled list follows it again).
+        self.scroll.first = None;
+        if let PadButton::PageUp | PadButton::PageDown = button {
+            self.press_page(button, frame);
+        } else {
+            self.press_button(button, frame);
+        }
+    }
+
+    /// One press of a button of the pad on the screen shown.
+    fn press_button(&mut self, button: PadButton, frame: &mut UiFrame<'_>) {
         // A question of the host (a save state made with the built-in patches set the other
         // way, for instance) is answered first: A agrees, B declines.
         if frame.host.pending_confirmation().is_some() {
@@ -855,6 +1161,23 @@ impl HandheldUi {
                 self.toggle_overlay(frame.host);
             }
             return;
+        }
+        // Xnes3D+: the chiptune sounds of the interface on its screens (not in a game).
+        if self.screen != Screen::InGame {
+            let sound = match button {
+                PadButton::Up | PadButton::Down | PadButton::Left | PadButton::Right => {
+                    Some(crate::audio::UiSound::Move)
+                }
+                PadButton::A | PadButton::Start => Some(crate::audio::UiSound::Confirm),
+                PadButton::B => Some(crate::audio::UiSound::PageChange),
+                PadButton::L1 | PadButton::R1 | PadButton::L2 | PadButton::R2 => {
+                    Some(crate::audio::UiSound::TabChange)
+                }
+                _ => None,
+            };
+            if let (Some(sound), Some(mixer)) = (sound, frame.host.mixer_mut()) {
+                mixer.play_sound(sound);
+            }
         }
         match self.screen {
             // Xnes3D+: with no game listed, A picks the ROM folder (Android).
@@ -921,6 +1244,8 @@ impl HandheldUi {
                     self.carry_out_overlay(command, frame.host);
                 }
             }
+            Screen::GameInfo => self.press_game_info(button, frame.host),
+            Screen::Setup => self.press_setup(button, frame.host),
             Screen::States => {
                 let host = &*frame.host;
                 let command = self.states.handle(button, |slot| slot_state(host, slot));
@@ -943,6 +1268,42 @@ impl HandheldUi {
     }
 
     fn carry_out_home(&mut self, command: RomListCommand, host: &mut AppHost) {
+        // A game of a page of games: played once the page downloaded it, which then answers as
+        // for any ROM; its file, options and hacks come with the download.
+        let remote = |path: &Path| {
+            self.roms
+                .entries()
+                .iter()
+                .find(|entry| entry.path == path)
+                .and_then(|entry| entry.remote.clone().map(|url| (url, entry.clone())))
+        };
+        match &command {
+            RomListCommand::Play(path) => {
+                if let Some((url, entry)) = remote(path) {
+                    // As for a ROM of the folder: its profile, else "2D Mode".
+                    let profile = entry
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.id.clone())
+                        .or_else(|| host.games().two_dimensional_mode_id());
+                    crate::web_bridge::request_remote_game(&url, &entry.name, profile.as_deref());
+                    return;
+                }
+            }
+            RomListCommand::ChooseProfile(_)
+            | RomListCommand::Options
+            | RomListCommand::ResumeLast
+            | RomListCommand::ToggleFavorite(_)
+            | RomListCommand::GameInfo(_) => {}
+            RomListCommand::GameOptions(path)
+            | RomListCommand::Widescreen(path)
+            | RomListCommand::Hacks(path)
+            | RomListCommand::Achievements(path) => {
+                if remote(path).is_some() {
+                    return;
+                }
+            }
+        }
         match command {
             RomListCommand::Play(path) => {
                 let profile = self
@@ -960,6 +1321,14 @@ impl HandheldUi {
                     Some(id) => host.launch_rom_with_profile(&rom, &id),
                     None => host.enqueue(Command::OpenRom, CommandArgs::of_text(&rom)),
                 }
+                // Xnes3D+: the cartridge slides into the console while the game loads.
+                let name = self
+                    .roms
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.path == path)
+                    .map_or_else(String::new, |entry| entry.name.clone());
+                self.launch_animation = Some((name, 0.0));
                 self.note_study(&path, host);
             }
             RomListCommand::ChooseProfile(path) => {
@@ -974,6 +1343,10 @@ impl HandheldUi {
                 }
             }
             RomListCommand::GameOptions(path) => self.open_game_options(&path, host),
+            RomListCommand::GameInfo(path) => {
+                self.roms.select_path(&path);
+                self.screen = Screen::GameInfo;
+            }
             RomListCommand::Options => self.open_options(host),
             RomListCommand::Widescreen(path) => {
                 // L1 opens the widescreen's settings, no quick toggle on the list (owner request).
@@ -1020,6 +1393,17 @@ impl HandheldUi {
                     {
                         entry.favorite = favorite;
                     }
+                    // Xnes3D+: the favourites first; the selection stays on the game.
+                    let mut entries = self.roms.entries().to_vec();
+                    let resume = entries.first().is_some_and(|entry| entry.resume);
+                    let start = usize::from(resume);
+                    entries[start..].sort_by(|a, b| {
+                        b.favorite
+                            .cmp(&a.favorite)
+                            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    });
+                    self.roms.replace(entries);
+                    self.roms.select_path(&path);
                 }
             }
         }
@@ -1153,6 +1537,15 @@ impl HandheldUi {
                     }
                 }
             }
+            GameOptionsCommand::ResetSmart3d => {
+                if let Some(rom) = self
+                    .game_options
+                    .as_ref()
+                    .map(|options| options.rom().clone())
+                {
+                    host.forget_smart3d(&rom);
+                }
+            }
             GameOptionsCommand::OpenHacks => {
                 if let Some(rom) = self
                     .game_options
@@ -1212,6 +1605,7 @@ impl HandheldUi {
                 Screen::Home
             };
         }
+        self.options.sync(host.settings());
         self.screen = Screen::Options;
     }
 
@@ -1250,8 +1644,115 @@ impl HandheldUi {
                         frame.host.enqueue(Command::SaveSlot, args);
                     }
                 }
-                self.ask_android(action);
+                // Xnes3D+: the box art rows send the list of games with their request.
+                match action {
+                    crate::android_bridge::AndroidAction::DownloadMedia => {
+                        self.ask_for_media(frame.host, "launchbox");
+                    }
+                    crate::android_bridge::AndroidAction::EsDeMedia => {
+                        self.ask_for_media(frame.host, "esde");
+                    }
+                    _ => self.ask_android(action),
+                }
             }
+        }
+    }
+
+    /// Xnes3D+: shows the setup the first time the interface starts on Android (until its file
+    /// is written, when it ends or is skipped).
+    fn follow_the_setup(&mut self, host: &AppHost) {
+        if self.setup_checked {
+            return;
+        }
+        self.setup_checked = true;
+        if crate::android_bridge::available()
+            && self.screen == Screen::Home
+            && !host.paths().root.join(setup::DONE_FILE).exists()
+        {
+            self.setup = setup::SetupModel::default();
+            self.screen = Screen::Setup;
+        }
+    }
+
+    /// Xnes3D+: a press on the setup screen.
+    fn press_setup(&mut self, button: PadButton, host: &mut AppHost) {
+        let command = match self.setup.handle(button) {
+            Some(setup::SetupCommand::Choose(choice)) => match choice {
+                setup::SetupChoice::Android(action) => {
+                    self.ask_android(action);
+                    None
+                }
+                setup::SetupChoice::Media(source) => {
+                    self.refresh_roms(host);
+                    self.ask_for_media(host, source);
+                    self.setup.next()
+                }
+                setup::SetupChoice::Next => {
+                    // The folder chosen in the first step shows in the list at once.
+                    self.refresh_roms(host);
+                    self.setup.next()
+                }
+            },
+            other => other,
+        };
+        if command == Some(setup::SetupCommand::Finish) {
+            let _ = std::fs::write(host.paths().root.join(setup::DONE_FILE), "1");
+            self.refresh_roms(host);
+            self.screen = Screen::Home;
+        }
+    }
+
+    /// Xnes3D+: the setup screen.
+    #[must_use]
+    pub const fn setup(&self) -> &setup::SetupModel {
+        &self.setup
+    }
+
+    /// Xnes3D+: a press on the Game info screen.
+    fn press_game_info(&mut self, button: PadButton, host: &mut AppHost) {
+        let Some(path) = self.roms.selected_entry().map(|entry| entry.path.clone()) else {
+            self.screen = Screen::Home;
+            return;
+        };
+        match button {
+            PadButton::A | PadButton::Start => {
+                self.screen = Screen::Home;
+                self.carry_out_home(RomListCommand::Play(path), host);
+            }
+            PadButton::B => self.screen = Screen::Home,
+            PadButton::L2 => self.carry_out_home(RomListCommand::ToggleFavorite(path), host),
+            PadButton::R2 => self.carry_out_home(RomListCommand::Achievements(path), host),
+            // Another LaunchBox entry for this game, picked on the Android side.
+            PadButton::Y if crate::android_bridge::available() => {
+                if crate::android_bridge::write_media_request(&host.paths().root, "pick", &[path.as_path()])
+                {
+                    self.ask_android(crate::android_bridge::AndroidAction::MediaRequest);
+                }
+            }
+            PadButton::Up | PadButton::Down => {
+                let step: isize = if button == PadButton::Up { -1 } else { 1 };
+                self.roms.move_by(step);
+                // Rows that are not games (the Resume row) are skipped.
+                if self.roms.selected_entry().is_some_and(|entry| entry.resume) {
+                    self.roms.move_by(step);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Xnes3D+: asks Android for the box art and information of every game of the list, from
+    /// the LaunchBox index (`source` "launchbox") or what ES-DE downloaded (`source` "esde").
+    pub fn ask_for_media(&mut self, host: &AppHost, source: &str) {
+        let roms: Vec<&Path> = self
+            .roms
+            .entries()
+            .iter()
+            .filter(|entry| !entry.resume && entry.remote.is_none())
+            .map(|entry| entry.path.as_path())
+            .collect();
+        if crate::android_bridge::write_media_request(&host.paths().root, source, &roms) {
+            self.ask_android(crate::android_bridge::AndroidAction::MediaRequest);
         }
     }
 
@@ -1438,12 +1939,15 @@ impl HandheldUi {
                 self.states = StatesModel::new(mode, slot);
                 self.screen = Screen::States;
             }
-            OverlayCommand::ToggleFastForward => {
-                close(self, host);
-                host.enqueue(Command::FastForward, CommandArgs::default());
+            OverlayCommand::SetSpeed(tenths) => {
+                self.overlay.set_speed(tenths);
+                host.set_speed_boost(f64::from(tenths) / 10.0);
             }
             OverlayCommand::SetCamera(preset) => apply_camera(preset, host),
             OverlayCommand::Options => self.open_options(host),
+            // Zaxnes's own bus: nothing to open on an engine without it (FCEUX), which the row says.
+            OverlayCommand::Widescreen | OverlayCommand::Hacks
+                if !draw::playing_with_hacks(host) => {}
             OverlayCommand::Widescreen => {
                 if let Some(rom) = host.current_rom_path().map(PathBuf::from) {
                     let title = host.current_game_title().map(str::to_owned);
@@ -1471,6 +1975,8 @@ impl HandheldUi {
                 host.enqueue(Command::Stop, CommandArgs::default());
                 self.show_home(host);
             }
+            // The page's dialogue shows over the menu, which stays: the game waits behind both.
+            OverlayCommand::WebDialog(dialog) => crate::web_bridge::request_dialog(dialog),
             OverlayCommand::ExitToLauncher => host.enqueue(Command::Quit, CommandArgs::default()),
         }
     }
@@ -1638,7 +2144,7 @@ impl HandheldUi {
                 self.keyboard = Some(KeyboardModel::new(Field::Username, "Player"));
                 self.screen = Screen::Keyboard;
             }
-            Screen::Home | Screen::InGame => self.screen = screen,
+            Screen::Home | Screen::InGame | Screen::GameInfo | Screen::Setup => self.screen = screen,
         }
     }
 
