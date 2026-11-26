@@ -72,6 +72,13 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
         )
     }
 
+    /// Xnes3D+: the ROM of the game the resume point holds, so the Resume row can show its box
+    /// art (owner request).
+    #[must_use]
+    pub fn resume_rom_path(&self) -> Option<String> {
+        self.games.rom_path(&self.resume.as_ref()?.game_id)
+    }
+
     /// The thumbnail file of the resume point, or none when there is none to show
     /// (REQ-LOOP-076, « portant sa vignette »).
     #[must_use]

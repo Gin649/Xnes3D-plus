@@ -474,7 +474,26 @@ impl HandheldUi {
         entries.sort_by_key(|entry| !entry.favorite);
         // REQ-LOOP-076: the Resume entry heads the enumeration of the games.
         if let Some(game) = host.resume_game_title() {
-            entries.insert(0, RomEntry::resume_row(&game));
+            let mut row = RomEntry::resume_row(&game);
+            // Xnes3D+ (owner request): the row carries the game's ROM, so the panel shows its
+            // box art. Else the ROM of the list's game with the same profile.
+            let resumed = host.resume_point().map(|point| point.game_id.clone());
+            row.path = host
+                .resume_rom_path()
+                .map(PathBuf::from)
+                .or_else(|| {
+                    entries
+                        .iter()
+                        .find(|entry| {
+                            entry
+                                .profile
+                                .as_ref()
+                                .is_some_and(|profile| Some(&profile.id) == resumed.as_ref())
+                        })
+                        .map(|entry| entry.path.clone())
+                })
+                .unwrap_or_default();
+            entries.insert(0, row);
         }
         self.roms.replace(entries);
     }
@@ -535,6 +554,11 @@ impl HandheldUi {
                     .into_iter()
                     .next()
             })?;
+        // Xnes3D+ (owner request): the "3D by default" entry is Smart 3D, so the list shows it
+        // as a game with no profile, "Smart 3D", and not as a profile of its own.
+        if choice.is_default_three_d {
+            return None;
+        }
         Some(ProfileMatch {
             id: choice.id.clone(),
             title: choice.title.clone(),
@@ -866,7 +890,8 @@ impl HandheldUi {
         let Some(path) = self
             .roms
             .selected_entry()
-            .filter(|entry| !entry.resume && entry.remote.is_none())
+            // Xnes3D+: the Resume row too, through the ROM it carries (owner request).
+            .filter(|entry| entry.remote.is_none() && !entry.path.as_os_str().is_empty())
             .map(|entry| entry.path.clone())
         else {
             return;
