@@ -35,15 +35,11 @@ fn the_setting_is_a_three_valued_choice_that_defaults_to_zaxnes_and_acts_on_load
     // No Lua access: the original program has no such setting.
     assert_eq!(descriptor.lua_path(), None);
 
-    let choices = descriptor.domain().options().expect("three choices");
-    assert_eq!(choices.len(), 3, "the three engines, and no auto");
+    // Xnes3D+: the NesHawk engine was removed, so two engines are left.
+    let choices = descriptor.domain().options().expect("two choices");
+    assert_eq!(choices.len(), 2, "the two engines, and no auto");
     assert_eq!(choices[0].label, "Zaxnes");
     assert_eq!(choices[1].label, "FCEUX");
-    assert_eq!(choices[2].label, "NesHawk");
-    #[allow(clippy::float_cmp)] // Whole numbers.
-    {
-        assert_eq!(choices[2].value, 3.0, "2 is kept for zaxnes-neshawk");
-    }
 }
 
 /// The two values are the two engines, with the numbers a `games.json` stores.
@@ -60,8 +56,7 @@ fn the_two_values_are_the_two_engines() {
     assert_eq!(EngineKind::Fceux.to_string(), "FCEUX");
 }
 
-/// The setting is read and written without error in every build, and shown in every build: NesHawk
-/// is always there, so the row is always a real choice.
+/// The setting is read and written without error in every build, and shown in every build.
 #[test]
 fn the_setting_is_stored_and_shown_in_every_build() {
     let mut model = SettingsModel::new();
@@ -77,7 +72,7 @@ fn the_setting_is_stored_and_shown_in_every_build() {
 
     assert!(
         options::is_shown(catalogue::descriptor(SettingId::EmuEngine)),
-        "NesHawk is in every build, so the row always offers a choice"
+        "the engine row is listed in every build"
     );
 }
 
@@ -145,22 +140,9 @@ fn with_fceux_chosen_the_four_controls_are_greyed_with_a_reason() {
         }
     }
 
-    // NesHawk carries the widescreen extension and the hack packs since lot NESHAWK-HACKS, so
-    // those rows stay live; the sprite limit and the run-ahead are still greyed, in every build.
-    let mut neshawk = SettingsModel::new();
-    neshawk.set(SettingId::EmuEngine, SettingValue::Enum(3));
-    for (id, reason) in expected {
-        let greyed = matches!(
-            id,
-            SettingId::VideoRemoveSpriteLimit | SettingId::EmuRunAhead
-        );
-        assert_eq!(
-            options::inert_reason(id, &neshawk),
-            greyed.then_some(reason),
-            "{}",
-            id.key()
-        );
-    }
+    // Xnes3D+: a game saved on the removed NesHawk engine (value 3) plays on Zaxnes, and its
+    // handle says so.
+    assert_eq!(EngineHandle::of_kind(EngineKind::NesHawk).kind(), EngineKind::Zaxnes);
 
     // With Zaxnes chosen — the default — none of them is greyed on that account.
     let zaxnes = SettingsModel::new();

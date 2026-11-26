@@ -1,10 +1,8 @@
 //! BizHawk's `.bk2` movies in the application (owner request, 2026-11-12).
 //!
-//! A `.bk2` only stays in sync on the core that recorded it, and the one BizHawk NES core this
-//! build carries is NesHawk's port (`zax-neshawk`): a movie whose header names `NesHawk` switches
-//! the **session** to that engine, as an `.fm2` switches it to FCEUX (`own_movies.rs`), and leaves
-//! the game's own `emu.engine` alone. A movie of another core (`QuickNes`) or of none plays on the
-//! engine in force, with a warning that it may drift.
+//! A `.bk2` only stays in sync on the core that recorded it. Xnes3D+ carries no BizHawk core (the
+//! NesHawk port was removed), so a `.bk2` plays on the engine in force, with a warning that it
+//! may drift.
 //!
 //! The frames go through Zaxnes's own movie machinery ([`zax_nes::movie::MovieRun`]): the
 //! timeline, the seek, the movie bar, the 3D conversion and the profile's hooks all work as they
@@ -76,7 +74,11 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             }
         };
         let mut warnings = Vec::new();
-        let wanted = movie.recorded_engine();
+        // Xnes3D+: the NesHawk engine was removed, so a movie recorded on it plays on the engine
+        // in force, with the warning below that it may drift.
+        let wanted = movie
+            .recorded_engine()
+            .filter(|engine| *engine != EngineKind::NesHawk);
         if wanted.is_none() {
             let core = movie
                 .header
@@ -117,13 +119,6 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             self.bk2_loading = false;
             return;
         };
-        // No aid and no margin on the machine the movie plays on: without them the NesHawk
-        // engine attaches no widescreen extension at the power-on below.
-        if session.core().kind() == zax_core_api::EngineKind::NesHawk {
-            session.core_mut().set_hack_options(0);
-            session.core_mut().set_widescreen_margin(0);
-            session.core_mut().set_widescreen_vertical_margin(0);
-        }
         if let Some(expected) = movie.rom_sha1 {
             let data = rom.image.get(16..).unwrap_or_default();
             if zax_nes::movie::bk2::sha1(&rom.image) != expected

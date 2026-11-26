@@ -2839,7 +2839,6 @@ dependencies = [
  "zax-engine3d",
  "zax-fceux",
  "zax-nes",
- "zax-neshawk",
  "zax-platform",
  "zax-profiles",
  "zax-render",

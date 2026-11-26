@@ -1524,15 +1524,12 @@ pub(super) const FRENCH: &[(&str, &str)] = &[
     ),
     (
         "detail.emu.engine",
-        "Quel émulateur exécute ce jeu : le cœur de Zaxnes, FCEUX, ou NesHawk. C'est un choix par \
+        "Quel émulateur exécute ce jeu : le cœur de Zaxnes ou FCEUX. C'est un choix par \
          jeu et non une préférence, parce que la raison de passer à un autre moteur est toujours \
          un jeu précis. FCEUX est là pour la couverture — un jeu que Zaxnes exécute mal, ou dont \
-         la carte lui manque. NesHawk est le portage en Rust du cœur de BizHawk, et c'est lui qui \
-         fait rejouer un film de BizHawk à l'identique : un .bk2 enregistré sur NesHawk s'y \
-         rejoue trame pour trame, ce qu'aucun autre moteur ne peut promettre. Il prend effet au \
-         prochain chargement, changer de moteur voulant dire redémarrer la machine. Ni FCEUX ni \
-         NesHawk n'a de panoramique, de pack de hack, de réglage de la limite de sprites ni \
-         d'avance de trames : ce sont des pièces de la machine de Zaxnes, et leurs lignes le \
+         la carte lui manque. Il prend effet au prochain chargement, changer de moteur voulant \
+         dire redémarrer la machine. FCEUX n'a ni panoramique, ni pack de hack, ni réglage de la \
+         limite de sprites, ni d'avance de trames : ce sont des pièces de la machine de Zaxnes, et leurs lignes le \
          disent tant qu'un autre moteur est choisi. Une sauvegarde d'état faite sur un moteur ne \
          se charge pas sur un autre. Par défaut : Zaxnes.",
     ),

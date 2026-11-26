@@ -1550,15 +1550,12 @@ pub(super) const ENGLISH: &[(&str, &str)] = &[
     ),
     (
         "detail.emu.engine",
-        "Which emulator plays this game: Zaxnes's own core, FCEUX, or NesHawk. It is a choice per \
+        "Which emulator plays this game: Zaxnes's own core or FCEUX. It is a choice per \
          game, not a preference, because the reason to reach for another engine is always a \
          particular game. FCEUX is for coverage — a game Zaxnes runs badly, or on a board it \
-         does not have. NesHawk is the Rust port of BizHawk's own core, and it is what makes a \
-         BizHawk movie replay exactly: a .bk2 recorded on NesHawk plays back on it frame for \
-         frame, which no other engine can promise. It takes effect at the next load, since \
-         changing engines means starting the machine again. Neither FCEUX nor NesHawk has \
-         widescreen, hack packs, a sprite-limit control or run-ahead: those are part of Zaxnes's \
-         own machine, and their rows say so while another engine is chosen. A save state made on \
+         does not have. It takes effect at the next load, since changing engines means starting \
+         the machine again. FCEUX has no widescreen, hack packs, sprite-limit control or \
+         run-ahead: those are part of Zaxnes's own machine, and their rows say so while another engine is chosen. A save state made on \
          one engine cannot be loaded on another. Default: Zaxnes.",
     ),
 
