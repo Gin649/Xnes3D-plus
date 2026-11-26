@@ -29,23 +29,65 @@
 //!
 //! The numbers are first values to be tuned on real games.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::engine::build_geometry;
 use crate::frame::{ConversionFrame, FrameTile, ShapeId};
-use crate::vectors::Cell;
+use crate::geometry::builder::PatternGeometryBuilder;
 use crate::instance::PatternInstance;
-use crate::settings::ZLayer;
+use crate::registry::{PatternId, PatternRegistry};
+use crate::script::ScriptHost;
 use crate::segmenter::SegmentContext;
+use crate::settings::{RenderAlgorithm, ZLayer};
+use crate::vectors::Cell;
+
+mod hud;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Xnes3D+: what Smart 3D has learned about the game in play, kept from frame to frame. The
+/// engine owns it and empties it at each change of game.
+#[derive(Debug, Default)]
+pub struct Memory {
+    /// The NES colour of the sky found earlier in this game.
+    sky: Option<u8>,
+    /// The status bar sprites.
+    hud: hud::HudWatch,
+}
+
+impl Memory {
+    /// Forgets everything: a new game starts.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Xnes3D+: what Smart 3D needs to change a learned pattern's 3D during play and rebuild it.
+pub(crate) struct Tools<'a> {
+    pub patterns: &'a mut PatternRegistry,
+    pub host: &'a mut dyn ScriptHost,
+    pub geometry: &'a mut dyn PatternGeometryBuilder,
+    pub algorithm: RenderAlgorithm,
+}
+
+impl Tools<'_> {
+    /// Gives the pattern the 3D settings of `kind` and rebuilds its geometry.
+    fn remake(&mut self, id: PatternId, kind: Kind) {
+        let Some(pattern) = self.patterns.get_mut(id) else {
+            return;
+        };
+        let Some(instance) = pattern.instances_mut().first_mut() else {
+            return;
+        };
+        apply(kind, instance);
+        build_geometry(self.patterns, id, self.host, self.geometry, self.algorithm);
+    }
+}
 
 /// Turns Smart 3D on for the game about to start (the "3D by default" entry) or off (2D Mode or a
 /// profile).
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
-    // Each game starts with no sky found yet.
-    SKY.store(NO_SKY, Ordering::Relaxed);
 }
 
 /// True while the game plays with Smart 3D.
@@ -258,14 +300,17 @@ const SPRITE_RAISE: f32 = 4.0;
 /// and the enemies alike) comes a little forward, so they all stand on one plane ahead of the
 /// scenery, at their full depth. Sprites the game draws behind the background stay where they
 /// are.
-fn raise_sprites(frame: &mut ConversionFrame) {
+fn raise_sprites(frame: &mut ConversionFrame, memory: &Memory) {
     let raised: Vec<_> = frame
         .instances()
         .iter()
         .copied()
         .filter(|&id| {
             let instance = frame.instance(id);
-            !instance.background() && !frame.shape(instance.shape()).hidden()
+            // Xnes3D+: a status bar sprite stays with the status bar.
+            !instance.background()
+                && !frame.shape(instance.shape()).hidden()
+                && !memory.hud.patterns.contains(&instance.reference().pattern)
         })
         .collect();
     for id in raised {
@@ -285,14 +330,11 @@ const SKY_PUSH: f32 = 24.0;
 /// this share of the background. Without this, the sky went back only while it filled 30% of
 /// the screen, so scrolling past tall buildings (Darkwing Duck) brought it forward flush with
 /// the scenery, which then looked flat, and near that limit it flipped every few frames.
-const SKY_KEEP_SHARE: f32 = 0.05;
+const SKY_KEEP_SHARE: f32 = 0.02;
 /// A remembered sky is still not used when its plain tiles sit, on average, below this row: then
 /// that colour is most likely a floor or water here, not the sky.
 const SKY_KEEP_LOWEST_MEAN_Y: i64 = 160;
-/// The value of `SKY` when no sky has been found yet.
-const NO_SKY: u8 = 0xFF;
-/// Xnes3D+: the NES colour of the sky found earlier in this game, or `NO_SKY`.
-static SKY: AtomicU8 = AtomicU8::new(NO_SKY);
+
 
 /// True when the tile is plain: all its pixels drawn, in one colour.
 fn is_plain(tile: &FrameTile) -> bool {
@@ -308,7 +350,7 @@ fn nes_color(frame: &ConversionFrame, tile: &FrameTile, value: i32) -> Option<u8
 /// The sky's colour in this frame: the colour of the plain tiles that cover a large share of the
 /// background, mostly in its upper half. `None` when no colour does (the sky of most games is
 /// the background colour itself, which is not drawn as tiles at all).
-fn sky_color(frame: &ConversionFrame) -> Option<u8> {
+fn sky_color(frame: &ConversionFrame, memory: &mut Memory) -> Option<u8> {
     // Per NES colour: plain tiles counted and the sum of their rows.
     let mut counts = [(0u32, 0i64); 64];
     let mut total = 0u32;
@@ -330,10 +372,12 @@ fn sky_color(frame: &ConversionFrame) -> Option<u8> {
     let mean_row = |count: u32, rows: i64| rows / i64::from(count.max(1));
     // Xnes3D+: the sky found earlier stays the sky while some of it is still on screen, so it
     // does not jump forward and back as the scenery covers more or less of it.
-    let remembered = SKY.load(Ordering::Relaxed);
-    if let Some(&(count, rows)) = counts.get(usize::from(remembered)) {
-        if share(count) >= SKY_KEEP_SHARE && mean_row(count, rows) < SKY_KEEP_LOWEST_MEAN_Y {
-            return Some(remembered);
+    if let Some(remembered) = memory.sky {
+        if let Some(&(count, rows)) = counts.get(usize::from(remembered)) {
+            if share(count) >= SKY_KEEP_SHARE && mean_row(count, rows) < SKY_KEEP_LOWEST_MEAN_Y
+            {
+                return Some(remembered);
+            }
         }
     }
     let (color, &(count, rows)) = counts
@@ -344,7 +388,7 @@ fn sky_color(frame: &ConversionFrame) -> Option<u8> {
         return None;
     }
     let color = u8::try_from(color).ok()?;
-    SKY.store(color, Ordering::Relaxed);
+    memory.sky = Some(color);
     Some(color)
 }
 
@@ -376,8 +420,8 @@ fn is_mostly_sky(frame: &ConversionFrame, tile: &FrameTile, sky: u8) -> bool {
 /// Xnes3D+ (owner request): the sky of this frame goes back, so the scenery stands in front of
 /// it instead of flat against it. A background shape goes back when at least half of its tiles
 /// are mostly sky (a run of plain sky tiles is often one shape).
-fn push_sky_back(frame: &mut ConversionFrame) {
-    let Some(sky) = sky_color(frame) else {
+fn push_sky_back(frame: &mut ConversionFrame, memory: &mut Memory) {
+    let Some(sky) = sky_color(frame, memory) else {
         return;
     };
     let pushed: Vec<_> = frame
@@ -407,12 +451,16 @@ fn push_sky_back(frame: &mut ConversionFrame) {
     }
 }
 
-/// Xnes3D+: the changes Smart 3D makes to each frame once it is segmented: the sky goes back
-/// and the characters come forward.
-pub(crate) fn adjust_frame(frame: &mut ConversionFrame) {
+/// Xnes3D+: the changes Smart 3D makes to each frame once it is segmented: status bar sprites
+/// are found and made thin, the sky goes back and the characters come forward.
+pub(crate) fn adjust_frame(frame: &mut ConversionFrame, memory: &mut Memory, tools: &mut Tools<'_>) {
     if !enabled() {
         return;
     }
-    push_sky_back(frame);
-    raise_sprites(frame);
+    let playfield = playfield_offset(frame);
+    for pattern in memory.hud.watch(frame, playfield) {
+        tools.remake(pattern, Kind::StatusBar);
+    }
+    push_sky_back(frame, memory);
+    raise_sprites(frame, memory);
 }

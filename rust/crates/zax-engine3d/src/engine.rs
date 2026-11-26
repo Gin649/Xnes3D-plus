@@ -85,6 +85,8 @@ pub struct ConversionEngine {
     /// (AMD-062 REQ-PROF-080). Session knowledge: neither the savestates nor the rollback
     /// snapshots carry it.
     hash_tiles: Option<HashProfileTiles>,
+    /// Xnes3D+: what Smart 3D learned about the game in play.
+    smart3d: crate::smart3d::Memory,
 }
 
 impl Default for ConversionEngine {
@@ -149,6 +151,7 @@ impl ConversionEngine {
             draw_list_builder: DrawListBuilder::new(),
             hook_time: None,
             hash_tiles: None,
+            smart3d: crate::smart3d::Memory::default(),
         }
     }
 
@@ -320,6 +323,8 @@ impl ConversionEngine {
         state.patterns.clear(&mut state.images);
         state.images.clear();
         state.clear_frames();
+        // Xnes3D+: the patterns Smart 3D remembered are gone with the registry.
+        self.smart3d.clear();
         state.profile_is_version_2 = profile.is_v2_format();
         if apply_settings {
             state.settings.apply_profile(profile.settings.as_ref());
@@ -454,6 +459,8 @@ impl ConversionEngine {
         state.images.clear();
         state.profile_image_count = 0;
         state.clear_frames();
+        // Xnes3D+: Smart 3D starts afresh with the next game.
+        self.smart3d.clear();
         // A change of game drops the tiles a "3dh" profile was waiting for with the profile
         // itself; what the session resolved is kept by the cache of REQ-PROF-082, not here.
         self.hash_tiles = None;
@@ -542,7 +549,15 @@ impl ConversionEngine {
 
         // Xnes3D+: in Smart 3D, the sky goes back and the characters come forward.
         if !self.state.two_dimensional_mode {
-            crate::smart3d::adjust_frame(self.state.converting_frame_mut());
+            let state = &mut self.state;
+            let index = state.converting;
+            let mut tools = crate::smart3d::Tools {
+                patterns: &mut state.patterns,
+                host: self.host.as_mut(),
+                geometry: self.geometry.as_mut(),
+                algorithm: state.settings.render_algorithm,
+            };
+            crate::smart3d::adjust_frame(&mut state.frames[index], &mut self.smart3d, &mut tools);
         }
 
         // (e) instance positions.
