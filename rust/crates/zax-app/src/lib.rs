@@ -16,6 +16,7 @@ pub mod emulation;
 mod flags;
 pub mod frame_profiler;
 pub mod frame_rate_counter;
+pub mod game_media;
 pub mod game_session;
 pub mod graphics;
 pub mod handheld_mode;

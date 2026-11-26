@@ -33,15 +33,26 @@ use crate::ui::{key_config, keys, strings, text};
 const SCROLL_TRACK: [f32; 4] = [1.0, 1.0, 1.0, 0.10];
 /// Its thumb: the rows shown.
 const SCROLL_THUMB: [f32; 4] = [1.0, 1.0, 1.0, 0.45];
-const BACKGROUND: [f32; 4] = [0.03, 0.03, 0.06, 1.0];
-const PANEL: [f32; 4] = [0.05, 0.05, 0.09, 0.96];
-const TEXT: [f32; 4] = [0.96, 0.96, 0.96, 1.0];
-const DIM: [f32; 4] = [0.68, 0.72, 0.8, 1.0];
-const FOCUS: [f32; 4] = [1.0, 0.82, 0.16, 1.0];
+// Xnes3D+: the NES look of the mockups: charcoal screens, a light grey title band with the
+// console's ridges, and a light grey focus bar with a red edge.
+const BACKGROUND: [f32; 4] = [0.11, 0.11, 0.118, 1.0];
+const PANEL: [f32; 4] = [0.11, 0.11, 0.118, 0.97];
+const TEXT: [f32; 4] = [0.925, 0.925, 0.925, 1.0];
+const DIM: [f32; 4] = [0.71, 0.71, 0.73, 1.0];
+const FOCUS: [f32; 4] = [0.925, 0.925, 0.925, 1.0];
+/// Xnes3D+: the title band, its text and its ridges.
+const TITLE_BAND: [f32; 4] = [0.79, 0.79, 0.79, 1.0];
+const TITLE_TEXT: [f32; 4] = [0.11, 0.11, 0.118, 1.0];
+const TITLE_DIM: [f32; 4] = [0.24, 0.24, 0.26, 1.0];
+const RIDGE: [f32; 4] = [0.61, 0.61, 0.61, 1.0];
+/// Xnes3D+: the gold of an unlocked achievement (the focus bar is grey now) and the red of the
+/// share of a game's achievements in the list.
+const GOLD: [f32; 4] = [1.0, 0.82, 0.16, 1.0];
+const PERCENT: [f32; 4] = [1.0, 0.35, 0.4, 1.0];
 const ON_FOCUS: [f32; 4] = [0.04, 0.04, 0.04, 1.0];
 const PROFILE: [f32; 4] = [0.45, 0.92, 0.55, 1.0];
 const PROFILE_ON_FOCUS: [f32; 4] = [0.02, 0.32, 0.08, 1.0];
-const BAR: [f32; 4] = [0.1, 0.1, 0.16, 1.0];
+const BAR: [f32; 4] = [0.17, 0.17, 0.18, 1.0];
 const WARNING: [f32; 4] = [1.0, 0.45, 0.35, 1.0];
 /// The [W] of a game whose ROM was not studied yet: its profile or its name says a hack.
 const UNSTUDIED: [f32; 4] = [0.42, 0.44, 0.5, 1.0];
@@ -89,8 +100,9 @@ const GAME_OWN_MARKER: &str = "*";
 const GROUP_TITLE: [f32; 4] = [0.5, 0.54, 0.62, 1.0];
 /// The save state screen when it saves, and when it loads: two colours apart from each other and
 /// from the orange and red of the states that do not load as they are.
-const SAVE_ACCENT: [f32; 4] = [0.84, 0.46, 1.0, 1.0];
-const LOAD_ACCENT: [f32; 4] = [0.36, 0.68, 1.0, 1.0];
+/// Xnes3D+: a light red and a light grey, in the NES colours, dark text reading on both.
+const SAVE_ACCENT: [f32; 4] = [0.96, 0.6, 0.62, 1.0];
+const LOAD_ACCENT: [f32; 4] = [0.8, 0.8, 0.82, 1.0];
 /// A state made with the built-in patches set the other way (it loads once they are switched).
 const OTHER_MODE: [f32; 4] = [1.0, 0.62, 0.2, 1.0];
 
@@ -189,7 +201,7 @@ impl Painter<'_> {
     fn title(&self, title: &str, right: &str) {
         let metrics = &self.metrics;
         self.list
-            .add_rect([0.0, 0.0], [self.size[0], metrics.title_band()], BAR)
+            .add_rect([0.0, 0.0], [self.size[0], metrics.title_band()], TITLE_BAND)
             .filled(true)
             .build();
         // Xnes3D+: a red stripe under the band, as on the console's front.
@@ -202,6 +214,7 @@ impl Painter<'_> {
             )
             .filled(true)
             .build();
+        let title_end;
         {
             let _heading = self.heading.map(|font| self.ui.push_font(font));
             if title == text::PRODUCT_NAME {
@@ -209,16 +222,35 @@ impl Painter<'_> {
                 // name, then the "+" in red.
                 let pixel = (metrics.heading / 7.0).floor().max(2.0);
                 let top = (metrics.title_band() - stripe - pixel * 7.0) * 0.5;
-                let x = self.pixel_word(metrics.padding, top, pixel, TEXT, LOGO_NAME);
-                self.pixel_word(x + pixel * 2.0, top, pixel, NES_RED, LOGO_PLUS);
+                let x = self.pixel_word(metrics.padding, top, pixel, TITLE_TEXT, LOGO_NAME);
+                let end = self.pixel_word(x + pixel * 2.0, top, pixel, NES_RED, LOGO_PLUS);
+                title_end = end + metrics.padding * 1.5;
             } else {
-                self.text(metrics.padding, metrics.padding, FOCUS, title);
+                self.text(metrics.padding, metrics.padding, TITLE_TEXT, title);
+                title_end = metrics.padding * 2.5 + self.ui.calc_text_size(title)[0];
             }
         }
+        let mut ridges_end = self.size[0] - metrics.padding;
         if !right.is_empty() {
             let x = self.size[0] - metrics.padding - self.width(right);
             let y = (metrics.title_band() - metrics.font) * 0.5;
-            self.text(x, y, DIM, right);
+            self.text(x, y, TITLE_DIM, right);
+            ridges_end = x - metrics.padding * 1.5;
+        }
+        // Xnes3D+: the ridges of the console's front, between the title and the right text.
+        if ridges_end - title_end > metrics.padding * 3.0 {
+            let band = metrics.title_band() - stripe;
+            let height = (metrics.font * 0.9).round();
+            let mut y = ((band - height) * 0.5).round();
+            let bottom = y + height;
+            let line = (metrics.padding * 0.25).max(2.0).round();
+            while y + line <= bottom {
+                self.list
+                    .add_rect([title_end, y], [ridges_end, y + line], RIDGE)
+                    .filled(true)
+                    .build();
+                y += line * 2.3;
+            }
         }
     }
 
@@ -451,6 +483,13 @@ impl Painter<'_> {
                 .add_rect([x0, top], [x1, top + height], focus)
                 .filled(true)
                 .build();
+            // Xnes3D+: the red edge of the focus bar.
+            if focus == FOCUS {
+                self.list
+                    .add_rect([x0, top], [x0 + metrics.padding * 0.4, top + height], NES_RED)
+                    .filled(true)
+                    .build();
+            }
         } else {
             self.list
                 .add_line(
@@ -695,7 +734,7 @@ impl Painter<'_> {
             })
             .collect();
         self.list
-            .add_polyline(points, FOCUS)
+            .add_polyline(points, NES_RED)
             .thickness(self.metrics.padding * 0.18)
             .build();
     }
@@ -795,7 +834,7 @@ fn draw_grid_choice(
         &strings::get(keys::ACH_POINTS),
         &[&achievement.points.to_string()],
     );
-    let colour = if achievement.unlocked { FOCUS } else { TEXT };
+    let colour = if achievement.unlocked { GOLD } else { TEXT };
     painter.text(
         metrics.padding,
         y,
@@ -984,7 +1023,7 @@ impl HandheldUi {
                 badges.push(("[W]", badge));
             }
             if let Some(percent) = &percent {
-                badges.push((percent, FOCUS));
+                badges.push((percent, PERCENT));
             }
             let label = home_row_label(entry);
             if badges.is_empty() {
@@ -1533,7 +1572,16 @@ impl HandheldUi {
                         FOCUS,
                     )
                     .filled(true)
-                    .rounding(metrics.padding * 0.4)
+                    .build();
+                // Xnes3D+: the red edge of the focus bar.
+                painter
+                    .list
+                    .add_rect(
+                        [left + metrics.padding * 0.5, row_top],
+                        [left + metrics.padding * 0.9, row_top + height],
+                        NES_RED,
+                    )
+                    .filled(true)
                     .build();
             }
             let y = row_top + (metrics.row - metrics.font) * 0.5;
@@ -1662,7 +1710,7 @@ impl HandheldUi {
         let band = metrics.title_band();
         painter
             .list
-            .add_rect([0.0, 0.0], [size[0], band], BAR)
+            .add_rect([0.0, 0.0], [size[0], band], TITLE_BAND)
             .filled(true)
             .build();
         painter
@@ -1675,7 +1723,7 @@ impl HandheldUi {
             painter.text(
                 metrics.padding,
                 metrics.padding,
-                accent,
+                TITLE_TEXT,
                 &strings::get(title),
             );
         }
@@ -2135,7 +2183,7 @@ impl HandheldUi {
                 let pad = gap * 0.45;
                 painter
                     .list
-                    .add_rect([x - pad, y - pad], [x + icon + pad, y + icon + pad], FOCUS)
+                    .add_rect([x - pad, y - pad], [x + icon + pad, y + icon + pad], NES_RED)
                     .filled(true)
                     .rounding(pad)
                     .build();
