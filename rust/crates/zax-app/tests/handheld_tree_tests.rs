@@ -84,6 +84,7 @@ fn page_name(page: OptionsPage) -> &'static str {
         OptionsPage::SimpleRendering3d => "simple_rendering_3d",
         OptionsPage::SimpleAudio => "simple_audio",
         OptionsPage::SimpleEmulation => "simple_emulation",
+        OptionsPage::AllSettings => "all_settings",
     }
 }
 

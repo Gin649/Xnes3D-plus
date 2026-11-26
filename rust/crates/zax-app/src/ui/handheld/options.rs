@@ -163,11 +163,14 @@ pub enum OptionsPage {
     SimpleRendering3d,
     SimpleAudio,
     SimpleEmulation,
+    /// Xnes3D+: every setting, one row on the simple main page away (the advanced mode's main
+    /// page, without the rows the simple main page already has).
+    AllSettings,
 }
 
 impl OptionsPage {
     /// Every page, for the tests that walk them all.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Optimizations,
         Self::Advanced,
         Self::Display,
@@ -189,6 +192,7 @@ impl OptionsPage {
         Self::SimpleRendering3d,
         Self::SimpleAudio,
         Self::SimpleEmulation,
+        Self::AllSettings,
     ];
 
     /// The key of the page's title.
@@ -211,6 +215,8 @@ impl OptionsPage {
             Self::Touch => keys::HANDHELD_OPTION_TOUCH_SCREEN,
             Self::PresetOptions => "options.new.preset_options",
             Self::Widescreen => "options.new.tab.widescreen",
+            // Xnes3D+: its title is plain English (`plain::page_title`).
+            Self::AllSettings => "Advanced settings",
         }
     }
 
@@ -240,6 +246,7 @@ impl OptionsPage {
             Self::SimpleRendering3d => &SIMPLE_RENDERING_3D_ROWS,
             Self::SimpleAudio => &SIMPLE_AUDIO_ROWS,
             Self::SimpleEmulation => &SIMPLE_EMULATION_ROWS,
+            Self::AllSettings => &XNES_ALL_SETTINGS_ROWS,
         }
     }
 
@@ -412,6 +419,43 @@ pub const TOUCH_ROWS: [OptionRow; 20] = [
     OptionRow::Page(OptionsPage::Optimizations),
     OptionRow::Page(OptionsPage::Advanced),
     OptionRow::Profiler,
+    OptionRow::Reset,
+];
+
+/// Xnes3D+: the main page of the options on Android, whatever the mode. The rows players look
+/// for come first, then one Performance row in place of the preset pages, the simple pages, and
+/// one Advanced settings page that holds everything else. No mode row, no language row (English
+/// only) and no profiler.
+pub const XNES_MAIN_ROWS: [OptionRow; 14] = [
+    OptionRow::Page(OptionsPage::Library),
+    OptionRow::Achievements,
+    OptionRow::Controls,
+    OptionRow::Page(OptionsPage::Touch),
+    OptionRow::Preset,
+    OptionRow::Volume,
+    OptionRow::WidescreenOn,
+    OptionRow::Page(OptionsPage::SimpleDisplay),
+    OptionRow::Page(OptionsPage::SimpleNesPicture),
+    OptionRow::Page(OptionsPage::SimpleRendering3d),
+    OptionRow::Page(OptionsPage::SimpleAudio),
+    OptionRow::Page(OptionsPage::SimpleEmulation),
+    OptionRow::Page(OptionsPage::AllSettings),
+    OptionRow::Reset,
+];
+
+/// Xnes3D+: the Advanced settings page: what the advanced main page has beyond
+/// [`XNES_MAIN_ROWS`].
+pub const XNES_ALL_SETTINGS_ROWS: [OptionRow; 11] = [
+    OptionRow::RenderScale,
+    OptionRow::Shadows,
+    OptionRow::Palette,
+    OptionRow::Overscan,
+    OptionRow::Region,
+    OptionRow::Choice(SettingId::UiOrientation),
+    OptionRow::Page(OptionsPage::Widescreen),
+    OptionRow::Page(OptionsPage::Shaders),
+    OptionRow::Page(OptionsPage::Optimizations),
+    OptionRow::Page(OptionsPage::Advanced),
     OptionRow::Reset,
 ];
 
@@ -664,8 +708,10 @@ pub const CAMERA_ROWS: [OptionRow; 4] = [
 /// run-ahead's frames and does nothing without it. The debugging view that goes with it
 /// (`emu.smooth_scroll_view`) is **not** here: like `audio.latency_ms` it stays a desktop row,
 /// this screen being a short curated list.
-pub const EMULATION_ROWS: [OptionRow; 42] = [
-    OptionRow::Setting(SettingId::EmuEngine),
+///
+/// Xnes3D+: no engine row. Every game plays on the Zaxnes engine, the only one with the 3D,
+/// widescreen and hack features.
+pub const EMULATION_ROWS: [OptionRow; 41] = [
     // Lot CARTDB: the cartridge database and the power-on RAM, as in the window.
     OptionRow::Setting(SettingId::EmuCartridgeDb),
     OptionRow::Setting(SettingId::EmuPowerOnRam),
@@ -807,7 +853,9 @@ pub enum OptionsCommand {
 }
 
 /// How deep the pages go (RO-3): main › *Advanced options* › *3D rendering* › *Enhanced effects*.
-pub const MAX_DEPTH: usize = 3;
+///
+/// Xnes3D+: one more, for the Advanced settings page under the simple main page.
+pub const MAX_DEPTH: usize = 4;
 
 /// The index of the first row of `rows` a selection may rest on: a group title is a label, not a
 /// row. A page with nothing but group titles would be a mistake, and a test forbids it; the fall
@@ -931,6 +979,8 @@ impl HandheldOptionsModel {
                 OptionsPage::Shaders => &self.shader_rows,
                 page => page.rows(),
             },
+            // Xnes3D+: on Android the main page is always the plain one.
+            None if crate::android_bridge::available() => &XNES_MAIN_ROWS,
             None if self.advanced => Self::main_rows(),
             None => Self::simple_main_rows(),
         }
@@ -1308,9 +1358,45 @@ fn reset_page(rows: &[OptionRow], settings: &mut SettingsModel, preset: usize, o
     }
 }
 
+/// Xnes3D+: the title of `page`: its plain name where it has one.
+#[must_use]
+pub fn page_title(page: OptionsPage) -> String {
+    super::plain::page_title(page).map_or_else(|| strings::get(page.title_key()), str::to_owned)
+}
+
+/// Xnes3D+: whether `row` holds something other than what its page's reset row would put back
+/// (the chosen preset's value for a setting the preset manages, the setting's own default for
+/// the others). None for a row that holds no setting of its own.
+#[must_use]
+pub fn is_changed(row: OptionRow, settings: &SettingsModel) -> Option<bool> {
+    if matches!(row, OptionRow::Reset | OptionRow::Preset | OptionRow::Mode) {
+        return None;
+    }
+    let ids = reset_ids(row);
+    if ids.is_empty() {
+        return None;
+    }
+    let preset = &crate::ui::presets::PRESETS[crate::ui::presets::chosen(settings)];
+    Some(ids.iter().any(|&id| {
+        let base = preset
+            .values
+            .iter()
+            .find(|&&(managed, ..)| managed == id)
+            .map_or_else(
+                || catalogue::descriptor(id).default_value().clone(),
+                |&(_, value, _)| value.value(),
+            );
+        settings.get(id) != base
+    }))
+}
+
 /// The label of `row`, in the language in force.
 #[must_use]
 pub fn label(row: OptionRow) -> String {
+    // Xnes3D+: the plain name first, where it has one.
+    if let Some(plain) = super::plain::label(row) {
+        return plain.to_owned();
+    }
     match row {
         OptionRow::Language => text::label_of(catalogue::descriptor(SettingId::UiLanguage)),
         OptionRow::Volume => text::label_of(catalogue::descriptor(SettingId::AudioVolume)),

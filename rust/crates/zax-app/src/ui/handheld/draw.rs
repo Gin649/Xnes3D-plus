@@ -76,6 +76,8 @@ const fn pixel_letter(letter: char) -> [u8; 7] {
 
 /// What marks a favourite game in the home list (AMD-053 REQ-UI-210; the form is free).
 const FAVORITE_MARKER: &str = "*";
+/// Xnes3D+: what marks an option holding something other than its default.
+const CHANGED_MARKER: &str = "changed";
 /// A value a game has of its own, and the hint of the list when the game has some.
 const GAME_OWN: [f32; 4] = [0.3, 0.9, 1.0, 1.0];
 const GAME_OWN_ON_FOCUS: [f32; 4] = [0.0, 0.3, 0.4, 1.0];
@@ -96,7 +98,7 @@ const OTHER_MODE: [f32; 4] = [1.0, 0.62, 0.2, 1.0];
 /// 3D rendering > Enhanced effects". Empty on the main page (RO-3).
 fn page_path(path: &[options::OptionsPage]) -> String {
     path.iter()
-        .map(|page| strings::get(page.title_key()))
+        .map(|page| options::page_title(*page))
         .collect::<Vec<_>>()
         .join(" > ")
 }
@@ -698,6 +700,33 @@ impl Painter<'_> {
             .build();
     }
 
+    /// Xnes3D+: `help` in a box just above the hints, the width of the screen. Returns the
+    /// height it takes, which the list above leaves free.
+    fn help_box(&self, help: &str) -> f32 {
+        let metrics = &self.metrics;
+        let left = metrics.padding * 0.5;
+        let right = self.size[0] - metrics.padding * 0.5;
+        let wrap = right - left - metrics.padding * 2.0;
+        let text_height = self.ui.calc_text_size_with_opts(help, false, wrap)[1];
+        let height = text_height + metrics.padding * 1.5;
+        let bottom = self.size[1] - metrics.hint_band() - metrics.padding * 0.25;
+        let top = bottom - height;
+        self.list
+            .add_rect([left, top], [right, bottom], BAR)
+            .filled(true)
+            .build();
+        self.list
+            .add_rect([left, top], [left + metrics.padding * 0.3, bottom], NES_RED)
+            .filled(true)
+            .build();
+        self.ui
+            .set_cursor_pos([left + metrics.padding, top + metrics.padding * 0.75]);
+        let _wrap = self.ui.push_text_wrap_pos_with_pos(left + metrics.padding + wrap);
+        let _colour = self.ui.push_style_color(StyleColor::Text, DIM);
+        self.ui.text_wrapped(help);
+        height + metrics.padding * 0.25
+    }
+
     /// A paragraph in small print under the row `slot` of the list area.
     fn note(&self, slot: usize, text: &str) {
         let metrics = &self.metrics;
@@ -1076,7 +1105,7 @@ impl HandheldUi {
                         format!("{count} >")
                     };
                     plain(
-                        strings::get(page.title_key()),
+                        options::page_title(*page),
                         shown,
                         own_colour(!count.is_empty()),
                     )
@@ -1264,14 +1293,23 @@ impl HandheldUi {
                 Some(note) => format!("{shown} {note}"),
                 None => shown,
             };
+            // Xnes3D+: a row that holds something other than its default says so.
+            let badges = if options::is_changed(*row, frame.host.settings()) == Some(true) {
+                vec![(CHANGED_MARKER, WARNING)]
+            } else {
+                Vec::new()
+            };
             specs.push(RowSpec::Row {
                 left: options::row_label(*row, frame.host.settings()),
-                badges: Vec::new(),
+                badges,
                 right: shown,
                 colour: DIM,
             });
         }
-        painter.spec_list(&specs, selected, painter.list_room());
+        // Xnes3D+: what the selected row does, in a box under the list.
+        let help = super::plain::help(self.options.selected());
+        let help_height = help.map_or(0.0, |help| painter.help_box(help));
+        painter.spec_list(&specs, selected, painter.list_room() - help_height);
         painter.hints(layout::hints(Screen::Options));
     }
 

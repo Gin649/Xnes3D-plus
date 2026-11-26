@@ -118,9 +118,9 @@ pub const GAME_LIGHT_ROWS: [OptionRow; 1] = [OptionRow::Setting(SettingId::Rende
 /// the game's run-ahead frames, so it belongs where the run-ahead is and not on a page of its
 /// own. The branch had written both into a flat `GAME_ROWS` that RO-3 has since replaced; the
 /// run-ahead was already here.
-pub const GAME_EMULATION_ROWS: [OptionRow; 3] = [
-    // The engine the game plays on (owner request, 2026-11-12), taken at the next load.
-    OptionRow::Setting(SettingId::EmuEngine),
+///
+/// Xnes3D+: no engine row; every game plays on the Zaxnes engine.
+pub const GAME_EMULATION_ROWS: [OptionRow; 2] = [
     OptionRow::Setting(SettingId::EmuRunAhead),
     OptionRow::Setting(SettingId::EmuSmoothScrollAhead),
 ];
@@ -152,7 +152,8 @@ pub const fn page_rows(page: OptionsPage) -> &'static [OptionRow] {
         | OptionsPage::SimpleNesPicture
         | OptionsPage::SimpleRendering3d
         | OptionsPage::SimpleAudio
-        | OptionsPage::SimpleEmulation => &[],
+        | OptionsPage::SimpleEmulation
+        | OptionsPage::AllSettings => &[],
     }
 }
 

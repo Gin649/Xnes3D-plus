@@ -20,6 +20,7 @@ pub mod options;
 pub mod overlay;
 pub mod overscan;
 pub mod pad;
+pub mod plain;
 pub mod pointer;
 pub mod profile_list;
 pub mod rom_list;

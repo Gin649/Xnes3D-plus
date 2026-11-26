@@ -32,7 +32,7 @@ use crate::ui::text;
 ///
 /// Adding a setting to the desktop window therefore does not add a console row: a console row is
 /// an owner decision, written down here and placed by a page table.
-pub const ROW_SETTINGS: [SettingId; 108] = [
+pub const ROW_SETTINGS: [SettingId; 107] = [
     SettingId::VideoVSync,
     SettingId::VideoFrameRate,
     SettingId::VideoSkipFrame,
@@ -95,9 +95,7 @@ pub const ROW_SETTINGS: [SettingId; 108] = [
     SettingId::EmuGameSpeed,
     SettingId::EmuTvMode,
     SettingId::EmuAutoTvMode,
-    // The engine of a game (owner request, 2026-11-12: the choice on the console as in the
-    // window). A game's option like the run-ahead, so offered globally too (RO-3).
-    SettingId::EmuEngine,
+    // Xnes3D+: the engine row is not offered (every game plays on the Zaxnes engine).
     // Lot CARTDB: offered on the console as in the window.
     SettingId::EmuCartridgeDb,
     SettingId::EmuPowerOnRam,
