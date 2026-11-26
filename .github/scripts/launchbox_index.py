@@ -44,8 +44,23 @@ def main(archive, out):
     with zipfile.ZipFile(archive) as zipped:
         name = next(n for n in zipped.namelist() if n.lower().endswith("metadata.xml"))
         with zipped.open(name) as xml:
-            for _, element in ET.iterparse(xml, events=("end",)):
+            # The root is emptied after each record, so the file is never held in memory.
+            root = None
+            depth = 0
+            records = 0
+            for event, element in ET.iterparse(xml, events=("start", "end")):
+                if event == "start":
+                    if root is None:
+                        root = element
+                    depth += 1
+                    continue
+                depth -= 1
+                if depth != 1:
+                    continue
                 tag = element.tag
+                records += 1
+                if records % 500000 == 0:
+                    print(f"{records} records read, {len(games)} NES and Famicom games so far", flush=True)
                 if tag == "Game":
                     if text(element, "Platform") in PLATFORMS:
                         year = text(element, "ReleaseYear") or text(element, "ReleaseDate")[:4]
@@ -59,11 +74,9 @@ def main(archive, out):
                             "o": text(element, "Overview"),
                             "pf": "fds" if "Famicom" in text(element, "Platform") else "nes",
                         }
-                    element.clear()
                 elif tag == "GameAlternateName":
                     alternates.setdefault(text(element, "DatabaseID"), []).append(
                         text(element, "AlternateName"))
-                    element.clear()
                 elif tag == "GameImage":
                     field = PICTURES.get(text(element, "Type"))
                     if field:
@@ -71,7 +84,7 @@ def main(archive, out):
                         candidate = (region_rank(text(element, "Region")), text(element, "FileName"))
                         if candidate[1] and (key not in pictures or candidate < pictures[key]):
                             pictures[key] = candidate
-                    element.clear()
+                root.clear()
     out_games = []
     for database_id, game in games.items():
         if not game["n"]:
