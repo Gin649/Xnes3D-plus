@@ -1,3 +1,37 @@
+# Xnes3D+
+
+**Xnes3D+** is a 3D NES emulator for Android, made for handhelds like the AYN Thor. It's a fork
+of [nixxou's Zaxnes](https://github.com/nixxou/zaxnes) (everything about Zaxnes itself is further
+down this page), with an interface and features of its own:
+
+- **An NES look**: a game list styled like the console, with box art and game info from
+  LaunchBox for NES and Famicom games.
+- **Your own folders** for ROMs and saves.
+- **RetroArch-style hotkeys**: L2 rewind, R2 fast forward, R1 save, L1 load, L3+R3 menu.
+- **15 rotating save states** and an auto save, with a Resume row for the last game.
+- **3D profiles** chosen from its own menus (Y on a game).
+- **Smart 3D** for games without a profile. It works out each game's 3D as you play:
+  - the sky goes behind the scenery, and stays there;
+  - characters come forward, and bullets and sparks are drawn thinner;
+  - status bars stay flat, even ones drawn with sprites;
+  - the scenery characters stand on becomes solid floors;
+  - decoration and slower-scrolling distant layers move back.
+
+  What it learns is kept per game, so the next time it looks right from the start. **Reset
+  Smart 3D** in a game's Game options makes it start over.
+- **RetroAchievements**: "RA %" in the game list shows how far you got in each game.
+- **Installs beside** the official Zaxnes.
+
+Xnes3D+ plays every game on Zaxnes's own core (the NesHawk engine was removed).
+
+**Download:** the APK is on the [Releases](../../releases) page
+(`Xnes3D-plus-<version>-android-arm64.apk`, Android 7.0 or later, 64-bit ARM).
+
+Xnes3D+ is free software under the GNU General Public License v3, like Zaxnes. Interface font:
+Pixelify Sans (SIL Open Font License).
+
+---
+
 <p align="center">
   <img src="branding/zaxnes-logo.svg" alt="Zaxnes" width="420">
 </p>
@@ -34,8 +68,8 @@ And even without the 3D, it's a solid NES emulator:
   Famicom Disk System included. ([details](#accuracy))
 - **Or fast.** A fast core for small handhelds gives the same results with less CPU. You pick
   fast or accurate with one slider. ([details](#fast-or-accurate))
-- **Extra cores.** FCEUX, and a NesHawk-compatible core that plays BizHawk TAS movies (`.bk2`)
-  in sync. ([details](#three-engines))
+- **Extra cores.** FCEUX, and in the original Zaxnes, a NesHawk-compatible core that plays
+  BizHawk TAS movies (`.bk2`) in sync. ([details](#three-engines))
 - **The usual extras.** Rewind, save states, run-ahead, RetroAchievements and RetroArch shaders.
   ([details](#and-the-rest))
 
@@ -197,6 +231,8 @@ Each game can run on one of three engines, picked in its options:
 - **FCEUX**, the well-known emulator, built in.
 - **NesHawk**, a core that behaves like BizHawk's. It plays BizHawk TAS movies (`.bk2`) in sync,
   and the widescreen and the hacks work on it too.
+
+Xnes3D+ has none of these choices: it plays every game on Zaxnes's own core.
 
 ## And the rest
 
