@@ -2387,17 +2387,41 @@ impl HandheldUi {
 /// the form is free, and this one is a star before the name. REQ-LOOP-076: the Resume row says
 /// what it is, with the title of its game.
 fn home_row_label(entry: &RomEntry) -> String {
+    let name = without_region(&entry.name);
     if entry.resume {
         format!(
             "{} — {}",
             strings::get(&Command::ResumeLast.label_key()),
-            entry.name
+            name
         )
     } else if entry.favorite {
-        format!("{FAVORITE_MARKER} {}", entry.name)
+        format!("{FAVORITE_MARKER} {name}")
     } else {
-        entry.name.clone()
+        name.to_owned()
     }
+}
+
+/// Xnes3D+ (owner request): the name without the region tags at its end, such as "(USA)" or
+/// "(USA, Europe)". Other tags, such as "(Rev 1)", stay.
+fn without_region(name: &str) -> &str {
+    const REGIONS: [&str; 12] = [
+        "USA", "Europe", "Japan", "World", "Canada", "Australia", "Asia", "Korea", "Germany",
+        "France", "Spain", "Italy",
+    ];
+    let mut name = name.trim_end();
+    while let Some(open) = name.rfind(" (") {
+        let Some(inside) = name[open + 2..].strip_suffix(')') else {
+            break;
+        };
+        let all_regions = inside
+            .split(',')
+            .all(|part| REGIONS.contains(&part.trim()));
+        if !all_regions {
+            break;
+        }
+        name = name[..open].trim_end();
+    }
+    name
 }
 
 /// The tag at the right of a game: its 3D profile, or "2D" when it has none.
