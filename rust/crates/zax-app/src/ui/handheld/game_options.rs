@@ -29,12 +29,14 @@ pub enum GameRow {
     Widescreen,
     /// The hacks of the game: its own screen.
     Hacks,
+    /// Xnes3D+: makes Smart 3D forget what it learned about the game.
+    ResetSmart3d,
 }
 
 /// The rows of the main screen of a game's options, in the order of the owner's mockup (RO-3).
 /// The widescreen moved from next to last to between the overscan and the region; the hacks stay
 /// last.
-pub const GAME_MAIN: [GameRow; 11] = [
+pub const GAME_MAIN: [GameRow; 12] = [
     GameRow::ResetAll,
     GameRow::Option(OptionRow::Volume),
     GameRow::Option(OptionRow::RenderScale),
@@ -46,6 +48,7 @@ pub const GAME_MAIN: [GameRow; 11] = [
     GameRow::Option(OptionRow::Page(OptionsPage::Optimizations)),
     GameRow::Option(OptionRow::Page(OptionsPage::Advanced)),
     GameRow::Hacks,
+    GameRow::ResetSmart3d,
 ];
 
 /// *Optimisations* of a game: the eight performance rows of the global page. The smooth Lua
@@ -161,7 +164,7 @@ pub const fn page_rows(page: OptionsPage) -> &'static [OptionRow] {
 pub fn main_option_rows() -> impl Iterator<Item = OptionRow> {
     GAME_MAIN.into_iter().filter_map(|row| match row {
         GameRow::Option(row) => Some(row),
-        GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks => None,
+        GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks | GameRow::ResetSmart3d => None,
     })
 }
 
@@ -281,6 +284,8 @@ pub enum GameOptionsCommand {
     Widescreen,
     /// Open the game's overscan (Rust-only).
     OpenOverscan,
+    /// Xnes3D+: make Smart 3D forget what it learned about the game.
+    ResetSmart3d,
 }
 
 /// The options of one game and the selection; row 0 is "reset everything".
@@ -350,8 +355,11 @@ impl GameOptionsModel {
     /// The row of the widescreen of the game.
     pub const WIDESCREEN_ROW: usize = 6;
 
-    /// The row that opens the hacks of the game, the last one.
+    /// The row that opens the hacks of the game.
     pub const HACKS_ROW: usize = 10;
+
+    /// Xnes3D+: the row that makes Smart 3D forget the game, the last one.
+    pub const SMART3D_ROW: usize = 11;
 
     /// The index of the selected row: on the main screen 0 is "reset everything", on a page 0 is
     /// its first row.
@@ -614,6 +622,11 @@ impl GameOptionsModel {
                 return Some(GameOptionsCommand::OpenWidescreen);
             }
             PadButton::A if !self.in_advanced() && self.selected == 0 => return self.reset(),
+            PadButton::A if !self.in_advanced() && self.selected == Self::SMART3D_ROW => {
+                return Some(GameOptionsCommand::ResetSmart3d);
+            }
+            PadButton::Left | PadButton::Right
+                if !self.in_advanced() && self.selected == Self::SMART3D_ROW => {}
             PadButton::Left => return self.step(-1),
             PadButton::Right | PadButton::A => return self.step(1),
             _ => {}
@@ -629,7 +642,7 @@ impl GameOptionsModel {
             Some(rows) => rows.get(self.selected).copied(),
             None => match GAME_MAIN.get(self.selected)? {
                 GameRow::Option(row) => Some(*row),
-                GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks => None,
+                GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks | GameRow::ResetSmart3d => None,
             },
         }
     }
@@ -1074,10 +1087,11 @@ mod tests {
                 GameRow::Option(OptionRow::Page(OptionsPage::Optimizations)),
                 GameRow::Option(OptionRow::Page(OptionsPage::Advanced)),
                 GameRow::Hacks,
+                GameRow::ResetSmart3d,
             ],
             GAME_MAIN
         );
-        assert_eq!(11, GameOptionsModel::ROW_COUNT);
+        assert_eq!(12, GameOptionsModel::ROW_COUNT);
         assert_eq!(
             GameRow::Option(OptionRow::Page(OptionsPage::Advanced)),
             GAME_MAIN[GameOptionsModel::ADVANCED_ROW]
@@ -1087,6 +1101,7 @@ mod tests {
             GAME_MAIN[GameOptionsModel::WIDESCREEN_ROW]
         );
         assert_eq!(GameRow::Hacks, GAME_MAIN[GameOptionsModel::HACKS_ROW]);
+        assert_eq!(GameRow::ResetSmart3d, GAME_MAIN[GameOptionsModel::SMART3D_ROW]);
     }
 
     /// RO-3 §2 rule 2: a row that opens a page counts the game's own values under it, the pages

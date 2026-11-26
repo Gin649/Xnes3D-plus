@@ -19,6 +19,7 @@ mod own_movies;
 mod resume;
 mod save_states;
 mod script_reload;
+mod smart3d_store;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -1398,6 +1399,10 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
     /// own busy time being what the frame profiler reports.
     fn count_emulated_frame(&mut self, begin: Option<std::time::Instant>) {
         self.emulated_frames += 1;
+        // Xnes3D+: what Smart 3D learned is written once a minute while a game plays.
+        if self.emulated_frames % smart3d_store::SMART3D_SAVE_FRAMES == 0 {
+            self.keep_smart3d_memory();
+        }
         if let Some(sink) = self.emu_stats.as_ref() {
             let frame = self.emulated_frames;
             match begin {
@@ -2061,6 +2066,8 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             // AMD-062 REQ-PROF-082: what the game resolved is kept for the next launch, and the
             // catalogue keeps it for a relaunch of the same game (REQ-PROF-080).
             self.keep_resolved_tiles(&session);
+            // Xnes3D+: what Smart 3D learned about the game is kept for its next start.
+            self.keep_smart3d_memory_of(&session);
             session.end(&mut self.settings, &mut self.scene);
             session.engine_mut().clear_frames();
             if dispose_session {

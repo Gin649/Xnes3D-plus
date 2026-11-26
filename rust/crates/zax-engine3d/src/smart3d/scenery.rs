@@ -46,10 +46,10 @@ const COLOR_PUSH: f32 = 4.0;
 
 /// The speed of one band of the screen next to the level's.
 #[derive(Debug, Default, Clone, Copy)]
-struct Band {
+pub(super) struct Band {
     /// Pixels the band scrolled while the level scrolled `level` pixels.
-    moved: u32,
-    level: u32,
+    pub moved: u32,
+    pub level: u32,
 }
 
 impl Band {
@@ -64,10 +64,10 @@ impl Band {
 #[derive(Debug, Default)]
 pub(super) struct Scenery {
     walked: HashMap<PatternId, u32>,
-    floors: HashSet<PatternId>,
+    pub floors: HashSet<PatternId>,
     passed: HashMap<PatternId, u32>,
-    decor: HashSet<PatternId>,
-    bands: HashMap<i32, Band>,
+    pub decor: HashSet<PatternId>,
+    pub bands: HashMap<i32, Band>,
     last_rows: HashMap<i32, i32>,
     last_level_x: Option<i32>,
 }

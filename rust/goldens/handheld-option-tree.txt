@@ -303,3 +303,4 @@ game options
       emu.run_ahead
       emu.smooth_scroll_ahead
   page.hacks
+  row.reset_smart3d

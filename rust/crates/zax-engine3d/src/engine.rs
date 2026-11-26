@@ -466,6 +466,25 @@ impl ConversionEngine {
         self.hash_tiles = None;
     }
 
+    /// Xnes3D+: what Smart 3D learned about the game in play, earlier sessions included, as
+    /// text for the game's file. Empty when nothing was learned.
+    #[must_use]
+    pub fn smart3d_export(&self) -> String {
+        self.smart3d.export(&self.state.patterns)
+    }
+
+    /// Xnes3D+: takes back what Smart 3D learned in an earlier session of this game. Call it
+    /// once the game's session is made, before its first frame.
+    pub fn smart3d_import(&mut self, text: &str) {
+        self.smart3d.import(text);
+    }
+
+    /// Xnes3D+: forgets what Smart 3D learned about the game in play. The pieces already given
+    /// a learned look keep it until the game is started again.
+    pub fn smart3d_forget(&mut self) {
+        self.smart3d.clear();
+    }
+
     /// Rebuilds the geometry of one pattern, hooks included. Used when a savestate's learned
     /// patterns come back (REQ-E3D-008, REQ-E3D-322).
     pub(crate) fn rebuild_geometry_of(&mut self, id: PatternId) {

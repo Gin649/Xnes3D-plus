@@ -1564,6 +1564,11 @@ impl HandheldUi {
                     String::new(),
                     own_colour(options.has_options()),
                 ),
+                GameRow::ResetSmart3d => plain(
+                    strings::get(keys::HANDHELD_GAME_OPTIONS_RESET_SMART3D),
+                    String::new(),
+                    DIM,
+                ),
                 GameRow::Widescreen | GameRow::Hacks => {
                     let (label, value) = zaxnes_row_text(*row, options.edited());
                     plain(label, value, DIM)

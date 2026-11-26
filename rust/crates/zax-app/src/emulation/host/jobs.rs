@@ -543,6 +543,8 @@ impl<C: GameCatalog, V: GameView> EmulationHost<C, V> {
             Ok(session) => {
                 session.set_smooth_gc(self.settings.get(SettingId::EmuLuaSmoothGc).as_bool());
                 self.session = Some(session);
+                // Xnes3D+: Smart 3D starts from what it learned about this game before.
+                self.load_smart3d_memory();
                 // Whichever output is open takes the new core's samples: the audio thread's
                 // console slot (Q-153), or the mixer's source on the classic output of AUDIO-2.
                 self.attach_console();

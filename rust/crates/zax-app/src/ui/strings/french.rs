@@ -1642,6 +1642,11 @@ pub(super) const FRENCH: &[(&str, &str)] = &[
     (keys::HANDHELD_HINT_PAGE, "Page"),
     (keys::HANDHELD_GAME_OPTIONS_TITLE, "Options du jeu — {0}"),
     (keys::HANDHELD_GAME_OPTIONS_RESET, "Tout remettre en global"),
+    (keys::HANDHELD_GAME_OPTIONS_RESET_SMART3D, "Réinitialiser la 3D intelligente"),
+    (
+        keys::HANDHELD_SMART3D_FORGOTTEN,
+        "La 3D intelligente a oublié ce jeu. Elle réapprend au prochain lancement du jeu.",
+    ),
     (keys::HANDHELD_USE_GLOBAL, "Use Global : {0}"),
     (keys::HANDHELD_GLOBAL_VALUE, "Global : {0}"),
     (keys::HANDHELD_OWN_COUNT, "{0} propres"),

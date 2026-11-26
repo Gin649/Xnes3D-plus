@@ -173,6 +173,19 @@ impl UserDataPaths {
         self.movies_directory.join(format!("{rom}.mv{number}"))
     }
 
+    /// Xnes3D+: what Smart 3D learned about the ROM whose `games.json` key is `rom`:
+    /// `smart3d/<hash of the key>.txt`. The key is a path, so it is hashed into a file name
+    /// (FNV-1a, written out so it never changes).
+    #[must_use]
+    pub fn smart3d_file(&self, rom: &str) -> PathBuf {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in rom.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.root.join("smart3d").join(format!("{hash:016x}.txt"))
+    }
+
     /// The resolved-tile cache of the profile `id`: `tiles/<id>.tiles` (AMD-062 REQ-PROF-082).
     #[must_use]
     pub fn tile_cache_file(&self, id: &str) -> PathBuf {

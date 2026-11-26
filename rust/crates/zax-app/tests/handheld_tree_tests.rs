@@ -112,7 +112,10 @@ impl Tree {
                 .iter()
                 .filter_map(|row| match row {
                     GameRow::Option(row) => Some(*row),
-                    GameRow::ResetAll | GameRow::Widescreen | GameRow::Hacks => None,
+                    GameRow::ResetAll
+                    | GameRow::Widescreen
+                    | GameRow::Hacks
+                    | GameRow::ResetSmart3d => None,
                 })
                 .collect(),
         }
@@ -502,6 +505,7 @@ fn tree_text() -> String {
             GameRow::ResetAll => line(&mut out, 1, "row.reset_all"),
             GameRow::Widescreen => line(&mut out, 1, "row.widescreen"),
             GameRow::Hacks => line(&mut out, 1, "page.hacks"),
+            GameRow::ResetSmart3d => line(&mut out, 1, "row.reset_smart3d"),
             GameRow::Option(row) => emit(Tree::Game, &[row], 1, &mut out),
         }
     }

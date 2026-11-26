@@ -1512,6 +1512,15 @@ impl HandheldUi {
                     }
                 }
             }
+            GameOptionsCommand::ResetSmart3d => {
+                if let Some(rom) = self
+                    .game_options
+                    .as_ref()
+                    .map(|options| options.rom().clone())
+                {
+                    host.forget_smart3d(&rom);
+                }
+            }
             GameOptionsCommand::OpenHacks => {
                 if let Some(rom) = self
                     .game_options

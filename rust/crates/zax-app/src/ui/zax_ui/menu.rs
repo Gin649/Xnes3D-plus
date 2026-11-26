@@ -128,6 +128,12 @@ impl ZaxUi {
                         draw_aids(ui, host, aids);
                     }
                 }
+                GameRow::ResetSmart3d => {
+                    ui.separator();
+                    if ui.menu_item(strings::get(keys::HANDHELD_GAME_OPTIONS_RESET_SMART3D)) {
+                        host.forget_smart3d(path);
+                    }
+                }
                 GameRow::Option(OptionRow::Page(page)) => {
                     ui.separator();
                     changed |= draw_game_page(ui, host, &mut model, *page);

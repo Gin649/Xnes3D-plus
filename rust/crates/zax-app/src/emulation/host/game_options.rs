@@ -13,7 +13,7 @@ use crate::emulation::game_catalog::GameCatalog;
 
 /// The key of a ROM file in `games.json`: its absolute path, as a launch records it.
 #[must_use]
-fn game_options_key(rom_path: &str) -> String {
+pub(super) fn game_options_key(rom_path: &str) -> String {
     std::path::absolute(rom_path).map_or_else(
         |_| rom_path.to_owned(),
         |path| path.to_string_lossy().into_owned(),

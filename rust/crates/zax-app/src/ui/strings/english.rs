@@ -1661,6 +1661,11 @@ pub(super) const ENGLISH: &[(&str, &str)] = &[
     (keys::HANDHELD_HINT_PAGE, "Page"),
     (keys::HANDHELD_GAME_OPTIONS_TITLE, "Game options — {0}"),
     (keys::HANDHELD_GAME_OPTIONS_RESET, "Put everything back to global"),
+    (keys::HANDHELD_GAME_OPTIONS_RESET_SMART3D, "Reset Smart 3D"),
+    (
+        keys::HANDHELD_SMART3D_FORGOTTEN,
+        "Smart 3D forgot this game. It starts learning again the next time the game starts.",
+    ),
     (keys::HANDHELD_USE_GLOBAL, "Use Global : {0}"),
     (keys::HANDHELD_GLOBAL_VALUE, "Global: {0}"),
     (keys::HANDHELD_OWN_COUNT, "{0} own"),

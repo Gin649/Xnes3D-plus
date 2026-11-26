@@ -404,6 +404,10 @@ pub const HANDHELD_HINT_LOAD: &str = "handheld.hint.load";
 pub const HANDHELD_HINT_PAGE: &str = "handheld.hint.page";
 pub const HANDHELD_GAME_OPTIONS_TITLE: &str = "handheld.game_options.title";
 pub const HANDHELD_GAME_OPTIONS_RESET: &str = "handheld.game_options.reset";
+/// Xnes3D+: the row of a game's options that makes Smart 3D forget what it learned.
+pub const HANDHELD_GAME_OPTIONS_RESET_SMART3D: &str = "handheld.game_options.reset_smart3d";
+/// Xnes3D+: the note once it has.
+pub const HANDHELD_SMART3D_FORGOTTEN: &str = "handheld.smart3d_forgotten";
 pub const HANDHELD_USE_GLOBAL: &str = "handheld.game_options.use_global";
 /// RO-3 §2 rule 1: what a console row of a game's options shows while it uses the global value.
 /// Shorter than [`HANDHELD_USE_GLOBAL`], which the desktop menu still uses for its entry.
@@ -889,6 +893,8 @@ pub const PUBLISHED: &[&str] = &[
     HANDHELD_HINT_PAGE,
     HANDHELD_GAME_OPTIONS_TITLE,
     HANDHELD_GAME_OPTIONS_RESET,
+    HANDHELD_GAME_OPTIONS_RESET_SMART3D,
+    HANDHELD_SMART3D_FORGOTTEN,
     HANDHELD_USE_GLOBAL,
     HANDHELD_GLOBAL_VALUE,
     HANDHELD_OWN_COUNT,

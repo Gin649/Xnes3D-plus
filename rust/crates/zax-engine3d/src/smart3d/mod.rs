@@ -43,6 +43,7 @@ use crate::vectors::Cell;
 
 mod characters;
 mod hud;
+mod saved;
 mod scenery;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -57,12 +58,83 @@ pub struct Memory {
     hud: hud::HudWatch,
     /// The floors, the decoration and the distant bands.
     scenery: scenery::Scenery,
+    /// What an earlier session of this game learned.
+    saved: saved::Saved,
+    /// The patterns already compared with `saved`.
+    checked: std::collections::HashSet<PatternId>,
 }
 
 impl Memory {
     /// Forgets everything: a new game starts.
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// What was learned about this game, earlier sessions included, as the text the
+    /// application keeps in the game's file. Empty when nothing was learned.
+    #[must_use]
+    pub fn export(&self, patterns: &PatternRegistry) -> String {
+        let mut saved = self.saved.clone();
+        saved.sky = self.sky.or(saved.sky);
+        let key_of = |id: &PatternId| patterns.get(*id).map(saved::pattern_key);
+        saved.floors.extend(self.scenery.floors.iter().filter_map(key_of));
+        saved.status_bar.extend(self.hud.patterns.iter().filter_map(key_of));
+        saved.decor.extend(self.scenery.decor.iter().filter_map(key_of));
+        for (band, measure) in &self.scenery.bands {
+            saved.bands.insert(*band, (measure.moved, measure.level));
+        }
+        if saved.is_empty() {
+            return String::new();
+        }
+        saved.to_text()
+    }
+
+    /// Takes back what an earlier session of this game learned (the text of [`Self::export`]).
+    pub fn import(&mut self, text: &str) {
+        let saved = saved::Saved::from_text(text);
+        self.sky = saved.sky;
+        for (band, (moved, level)) in &saved.bands {
+            self.scenery.bands.insert(
+                *band,
+                scenery::Band {
+                    moved: *moved,
+                    level: *level,
+                },
+            );
+        }
+        self.saved = saved;
+    }
+
+    /// Xnes3D+: gives each piece of this frame seen for the first time the look an earlier
+    /// session learned for it.
+    fn restore(&mut self, frame: &ConversionFrame, tools: &mut Tools<'_>) {
+        let saved = &self.saved;
+        if saved.floors.is_empty() && saved.status_bar.is_empty() && saved.decor.is_empty() {
+            return;
+        }
+        let checked = &mut self.checked;
+        let new: Vec<PatternId> = frame
+            .instances()
+            .iter()
+            .map(|&id| frame.instance(id).reference().pattern)
+            .filter(|id| checked.insert(*id))
+            .collect();
+        for id in new {
+            let Some(key) = tools.patterns.get(id).map(saved::pattern_key) else {
+                continue;
+            };
+            if self.saved.status_bar.contains(&key) {
+                self.hud.patterns.insert(id);
+                tools.remake(id, Kind::StatusBar);
+            } else if self.saved.floors.contains(&key) {
+                self.scenery.floors.insert(id);
+                if tools.is_thin(id) {
+                    tools.remake(id, Kind::Solid);
+                }
+            } else if self.saved.decor.contains(&key) {
+                self.scenery.decor.insert(id);
+            }
+        }
     }
 }
 
@@ -75,6 +147,14 @@ pub(crate) struct Tools<'a> {
 }
 
 impl Tools<'_> {
+    /// True when the pattern is thinner than solid scenery and is not a status bar.
+    fn is_thin(&self, id: PatternId) -> bool {
+        self.patterns
+            .get(id)
+            .and_then(|pattern| pattern.instances().first())
+            .is_some_and(|instance| instance.depth < SOLID_DEPTH && instance.cast_shadow)
+    }
+
     /// Gives the pattern the 3D settings of `kind` and rebuilds its geometry.
     fn remake(&mut self, id: PatternId, kind: Kind) {
         let Some(pattern) = self.patterns.get_mut(id) else {
@@ -473,6 +553,7 @@ pub(crate) fn adjust_frame(frame: &mut ConversionFrame, memory: &mut Memory, too
     if !enabled() {
         return;
     }
+    memory.restore(frame, tools);
     let playfield = playfield_offset(frame);
     for pattern in memory.hud.watch(frame, playfield) {
         tools.remake(pattern, Kind::StatusBar);
@@ -481,12 +562,7 @@ pub(crate) fn adjust_frame(frame: &mut ConversionFrame, memory: &mut Memory, too
     let figures = characters::figures(frame, &memory.hud.patterns);
     let sky = memory.sky;
     for pattern in memory.scenery.watch(frame, &figures, sky) {
-        let thin = tools
-            .patterns
-            .get(pattern)
-            .and_then(|pattern| pattern.instances().first())
-            .is_some_and(|instance| instance.depth < SOLID_DEPTH && instance.cast_shadow);
-        if thin {
+        if tools.is_thin(pattern) {
             tools.remake(pattern, Kind::Solid);
         }
     }
