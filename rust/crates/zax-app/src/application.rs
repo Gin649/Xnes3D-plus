@@ -1245,6 +1245,12 @@ impl Running {
                 crate::android_bridge::set_saves_folder(folder);
             }
         }
+        // Xnes3D+: new box art or information, read again by the game list.
+        let done = root.join(crate::android_bridge::MEDIA_DONE_FILE);
+        if done.exists() {
+            let _ = std::fs::remove_file(&done);
+            self.ui.forget_media();
+        }
         let inbox = root.join(crate::android_bridge::PROFILE_INBOX);
         let Ok(entries) = std::fs::read_dir(&inbox) else {
             return;

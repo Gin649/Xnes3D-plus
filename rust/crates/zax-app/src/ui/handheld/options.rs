@@ -464,10 +464,13 @@ pub const XNES_ALL_SETTINGS_ROWS: [OptionRow; 11] = [
 pub const LIBRARY_TITLE: &str = "Games and 3D profiles";
 
 /// Xnes3D+: the rows of the games and profiles page, each carried out by Android.
-pub const LIBRARY_ROWS: [OptionRow; 10] = [
+pub const LIBRARY_ROWS: [OptionRow; 13] = [
     OptionRow::Group("Games"),
     OptionRow::Android(AndroidAction::ChooseRomFolder),
     OptionRow::Android(AndroidAction::ChooseSavesFolder),
+    OptionRow::Group("Box art and game info"),
+    OptionRow::Android(AndroidAction::DownloadMedia),
+    OptionRow::Android(AndroidAction::EsDeMedia),
     OptionRow::Group("3D profiles"),
     OptionRow::Android(AndroidAction::Import3dSen),
     OptionRow::Android(AndroidAction::CommunityProfiles),
@@ -487,6 +490,9 @@ fn android_label(action: AndroidAction) -> String {
         AndroidAction::CopyProfiles => "Copy from the profiles folder now",
         AndroidAction::ChooseSavesFolder => "Saves folder",
         AndroidAction::CheckUpdates => "Check for updates",
+        AndroidAction::DownloadMedia => "Download from LaunchBox",
+        AndroidAction::EsDeMedia => "Use what ES-DE downloaded",
+        AndroidAction::MediaRequest => "Box art",
     }
     .to_owned()
 }
@@ -517,6 +523,8 @@ fn android_value(action: AndroidAction, settings: &SettingsModel) -> String {
         AndroidAction::CommunityProfiles => "Download".to_owned(),
         AndroidAction::CopyProfiles => "Copy".to_owned(),
         AndroidAction::CheckUpdates => format!("v{}", crate::android_bridge::app_version()),
+        AndroidAction::DownloadMedia => "Download".to_owned(),
+        AndroidAction::EsDeMedia | AndroidAction::MediaRequest => "Copy".to_owned(),
     }
 }
 

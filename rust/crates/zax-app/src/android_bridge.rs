@@ -29,6 +29,31 @@ pub enum AndroidAction {
     ChooseSavesFolder = 6,
     /// Look for a newer Xnes3D+ release and offer to install it.
     CheckUpdates = 7,
+    /// Fetch the box art and information the request file asks for ([`write_media_request`]).
+    MediaRequest = 8,
+    /// The row that asks for the box art and information of every game from the LaunchBox
+    /// index. Rust writes the request, then sends [`Self::MediaRequest`]; Java never gets 9.
+    DownloadMedia = 9,
+    /// The same from what ES-DE downloaded. Java never gets 10 either.
+    EsDeMedia = 10,
+}
+
+/// The file Rust writes what box art and information it wants into, for `GameMedia.java`.
+pub const MEDIA_REQUEST_FILE: &str = "media-request.txt";
+/// The file Java writes once it wrote new box art or information.
+pub const MEDIA_DONE_FILE: &str = "media-done.txt";
+
+/// Writes the request for the media of `roms` from `source` ("launchbox", "esde", or "pick"
+/// for another LaunchBox entry of one game) into the user data folder `root`. False when it
+/// could not be written.
+#[must_use]
+pub fn write_media_request(root: &std::path::Path, source: &str, roms: &[&std::path::Path]) -> bool {
+    let mut text = format!("source={source}\n");
+    for rom in roms {
+        text.push_str(&format!("rom={}\n", rom.display()));
+    }
+    let part = root.join(format!("{MEDIA_REQUEST_FILE}.part"));
+    std::fs::write(&part, text).is_ok() && std::fs::rename(&part, root.join(MEDIA_REQUEST_FILE)).is_ok()
 }
 
 /// The Xnes3D+ version this build is (`.github/fork/VERSION`), shown beside Check for updates.

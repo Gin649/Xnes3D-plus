@@ -140,6 +140,17 @@ const HOME_HINTS: &[Hint] = &[
     hint("X", keys::HANDHELD_HINT_OPTIONS),
     hint("Y", keys::HANDHELD_HINT_PROFILE),
     hint("Select", keys::HANDHELD_HINT_GAME_OPTIONS),
+    // Xnes3D+: plain English, as the fork's other texts.
+    hint("L2", keys::HANDHELD_HINT_FAVORITE),
+    hint("R2", "Game info"),
+];
+/// Xnes3D+: the Game info screen.
+const GAME_INFO_HINTS: &[Hint] = &[
+    hint("A", keys::HANDHELD_HINT_PLAY),
+    hint("B", keys::HANDHELD_HINT_BACK),
+    hint("Y", "Match another entry"),
+    hint("L2", keys::HANDHELD_HINT_FAVORITE),
+    hint("R2", "Achievements"),
 ];
 // Xnes3D+: every screen shows A (choose) and B (back), so A always confirms and B always backs.
 const HACKS_HINTS: &[Hint] = &[
@@ -218,6 +229,7 @@ pub const fn hints(screen: Screen) -> &'static [Hint] {
         Screen::AchievementList => ACHIEVEMENT_LIST_HINTS,
         Screen::AchievementGrid => ACHIEVEMENT_GRID_HINTS,
         Screen::InGame => &[],
+        Screen::GameInfo => GAME_INFO_HINTS,
     }
 }
 

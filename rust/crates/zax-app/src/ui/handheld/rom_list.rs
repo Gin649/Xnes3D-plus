@@ -141,6 +141,8 @@ pub enum RomListCommand {
     ResumeLast,
     /// Mark or unmark the selected game as a favourite (AMD-053 REQ-UI-210, L2).
     ToggleFavorite(PathBuf),
+    /// Xnes3D+: the box art and information of the selected game (R2).
+    GameInfo(PathBuf),
 }
 
 /// The folder the paths of the remote rows are under; nothing is ever written there.
@@ -346,11 +348,12 @@ impl RomListModel {
                     .filter(|entry| !entry.resume)
                     .map(|entry| RomListCommand::Hacks(entry.path.clone()));
             }
+            // Xnes3D+: R2 opens the game's information, which has its achievements on R2.
             PadButton::R2 => {
                 return self
                     .selected_entry()
-                    .filter(|entry| !entry.resume)
-                    .map(|entry| RomListCommand::Achievements(entry.path.clone()));
+                    .filter(|entry| !entry.resume && entry.remote.is_none())
+                    .map(|entry| RomListCommand::GameInfo(entry.path.clone()));
             }
             PadButton::Start => {
                 return self.selected_entry().map(|entry| {

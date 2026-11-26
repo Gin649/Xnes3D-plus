@@ -344,6 +344,13 @@ impl ImguiFrontend {
         }
     }
 
+    /// Xnes3D+: the box art and information of the games were written again: read them again.
+    pub fn forget_media(&mut self) {
+        if let Some(handheld) = &mut self.handheld {
+            handheld.forget_media();
+        }
+    }
+
     /// Gives the ROM list the ROM folder of the options when it changed.
     fn follow_roms_folder(&mut self, host: &AppHost) {
         let setting = roms_setting(host);

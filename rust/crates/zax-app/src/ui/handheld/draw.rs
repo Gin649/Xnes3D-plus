@@ -19,7 +19,10 @@ use super::overscan;
 use super::pointer::{self, Zone, ZoneAction};
 use super::rom_list::{first_visible, ProfileMatch, RomEntry, RomListModel};
 use super::states::{SlotState, StatesMode};
-use super::{slot_state, HandheldUi, Screen, STATE_PICTURE_ID};
+use super::{
+    slot_state, HandheldUi, Screen, CART_PICTURE_ID, COVER_PICTURE_ID, SHOT_PICTURE_ID,
+    STATE_PICTURE_ID,
+};
 use crate::achievements::KnownGame;
 use crate::emulation::commands::Command;
 use crate::input::BindingDeviceKind;
@@ -158,6 +161,8 @@ struct Painter<'ui> {
     lift: Cell<f32>,
     /// How far right the rows start: the room of the list's scrollbar, when it has one.
     inset: Cell<f32>,
+    /// Xnes3D+: how far right the list starts: the room of the cover panel of the game list.
+    shift: Cell<f32>,
     /// The rank of the first row of the list drawn (group titles not counted), and how many
     /// titles it drew so far: the rank of each row's zone.
     rank_base: Cell<usize>,
@@ -320,7 +325,7 @@ impl Painter<'_> {
         let metrics = &self.metrics;
         // Four times the first width (owner request): wide enough for a finger.
         let width = (metrics.padding * 2.0).max(24.0).round();
-        let left = (metrics.padding * 0.25).round();
+        let left = (metrics.padding * 0.25).round() + self.shift.get();
         let top = metrics.title_band() + metrics.padding * 0.5;
         let room = self.list_room();
         let bottom = top + room;
@@ -347,12 +352,13 @@ impl Painter<'_> {
             .filled(true)
             .rounding(width * 0.5)
             .build();
+        let gap = (metrics.padding * 0.25).round();
         self.zone(
-            [0.0, top],
-            [left + width + left, bottom],
+            [left - gap, top],
+            [left + width + gap, bottom],
             ZoneAction::Scrollbar { first, rows, total },
         );
-        self.inset.set(width + left);
+        self.inset.set(width + gap * 2.0);
     }
 
     /// The pixels a list has between the title and the hints.
@@ -470,7 +476,7 @@ impl Painter<'_> {
     ) {
         let metrics = &self.metrics;
         let top = self.row_top(slot);
-        let x0 = metrics.padding * 0.5 + self.inset.get();
+        let x0 = metrics.padding * 0.5 + self.inset.get() + self.shift.get();
         // Owner request: a value that does not fit beside its label goes under it.
         let wrapped = self.wraps(left, badges, right.0, (x0, x1));
         let height = self.row_height(wrapped);
@@ -572,7 +578,7 @@ impl Painter<'_> {
         self.ui.set_window_font_scale(SCALE);
         let y = top + (metrics.row - metrics.font * SCALE) * 0.6;
         self.text(
-            metrics.padding * 1.5 + self.inset.get(),
+            metrics.padding * 1.5 + self.inset.get() + self.shift.get(),
             y,
             GROUP_TITLE,
             title,
@@ -904,6 +910,7 @@ impl HandheldUi {
         self.metrics.hint_lines = self.hint_lines.get();
         let _body = self.body_font().map(|font| ui.push_font(font));
         self.follow_the_state_picture(frame.host);
+        self.follow_the_media(frame.host);
         match self.screen {
             Screen::Home => self.draw_home(ui, frame),
             Screen::GameOptions => self.draw_game_options(ui, frame),
@@ -913,6 +920,7 @@ impl HandheldUi {
             Screen::Controls => self.draw_controls(ui, frame),
             Screen::Overscan => self.draw_overscan(ui, frame),
             Screen::Overlay => self.draw_overlay(ui, frame),
+            Screen::GameInfo => self.draw_game_info(ui, frame),
             Screen::States => self.draw_states(ui, frame),
             Screen::Achievements => self.draw_achievements(ui, frame),
             Screen::Keyboard => self.draw_keyboard(ui),
@@ -939,6 +947,7 @@ impl HandheldUi {
             hint_lines: &self.hint_lines,
             lift: Cell::new(0.0),
             inset: Cell::new(0.0),
+            shift: Cell::new(0.0),
             rank_base: Cell::new(0),
             titles: Cell::new(0),
             focus_rank: &self.focus_rank,
@@ -978,6 +987,14 @@ impl HandheldUi {
                 strings::format(&strings::get(keys::HANDHELD_ROMS_EMPTY), &[&folder])
             };
             painter.message(&message, TEXT);
+        }
+        // Xnes3D+: the cover of the selected game on the left, the list on the right.
+        if total > 0 {
+            let shelf = self.shelf_width(painter.size);
+            if shelf > 0.0 {
+                self.draw_cover_panel(&painter, shelf);
+                painter.shift.set(shelf);
+            }
         }
         let rows = self.metrics.visible_rows(painter.size[1]);
         let first = painter.window(self.roms.selected(), rows, total);
@@ -1068,10 +1085,7 @@ impl HandheldUi {
             hints.push(("L1", strings::get(keys::HACK_WIDESCREEN), colour));
             hints.push(("R1", strings::get(keys::MENU_AIDS), TEXT));
         }
-        // R2 the game's achievements, while RetroAchievements is on (owner request).
-        if frame.host.achievements.is_enabled() && self.roms.selected_entry().is_some() {
-            hints.push(("R2", strings::get(keys::TAB_ACHIEVEMENTS), TEXT));
-        }
+        // Xnes3D+: R2 opens the game's information (in HOME_HINTS), which has its achievements.
         // Xnes3D+: with no game listed, A picks the folder (Android).
         if total == 0 && crate::android_bridge::available() {
             hints = vec![
@@ -1080,6 +1094,229 @@ impl HandheldUi {
             ];
         }
         painter.hint_entries(&hints);
+    }
+
+    /// Xnes3D+: how wide the cover panel of the game list is: a third of a landscape screen,
+    /// none on a narrow or portrait one.
+    fn shelf_width(&self, size: [f32; 2]) -> f32 {
+        if size[0] < size[1] * 1.2 || size[0] < self.metrics.font * 30.0 {
+            return 0.0;
+        }
+        (size[0] * 0.3).round()
+    }
+
+    /// Xnes3D+: the cover panel: the box art of the selected game (or its name on a dark box
+    /// when it has none yet), then its year, publisher, players and genre.
+    fn draw_cover_panel(&self, painter: &Painter<'_>, shelf: f32) {
+        let metrics = &self.metrics;
+        let left = metrics.padding;
+        let right = shelf - metrics.padding * 0.5;
+        let top = metrics.title_band() + metrics.padding;
+        let bottom = painter.size[1] - metrics.hint_band() - metrics.padding * 0.5;
+        let width = right - left;
+        let lines_room = metrics.font * 3.0 + metrics.padding;
+        let art_room = (bottom - top - lines_room).max(metrics.row * 2.0);
+        let entry = self.roms.selected_entry();
+        let media = self.media();
+        let cover = media.and_then(|media| media.cover);
+        // An NES box is about 0.73 as wide as it is tall.
+        let (box_width, box_height) = cover.map_or_else(
+            || fit_size(73.0, 100.0, width, art_room),
+            |(w, h)| fit_size(f32::from(u16::try_from(w).unwrap_or(1)), f32::from(u16::try_from(h).unwrap_or(1)), width, art_room),
+        );
+        let x = left + (width - box_width) * 0.5;
+        let y = top;
+        painter
+            .list
+            .add_rect([x + 5.0, y + 5.0], [x + box_width + 5.0, y + box_height + 5.0], [0.0, 0.0, 0.0, 1.0])
+            .filled(true)
+            .build();
+        if cover.is_some() {
+            painter
+                .list
+                .add_image(
+                    imgui::TextureId::new(COVER_PICTURE_ID),
+                    [x, y],
+                    [x + box_width, y + box_height],
+                )
+                .build();
+        } else {
+            painter
+                .list
+                .add_rect([x, y], [x + box_width, y + box_height], [0.05, 0.05, 0.06, 1.0])
+                .filled(true)
+                .build();
+            // A row of red dashes along the top, as on a box of the time.
+            let dash = (metrics.padding * 0.8).max(6.0);
+            let mut dash_x = x + metrics.padding;
+            while dash_x + dash <= x + box_width - metrics.padding {
+                painter
+                    .list
+                    .add_rect([dash_x, y + metrics.padding], [dash_x + dash, y + metrics.padding * 1.4], NES_RED)
+                    .filled(true)
+                    .build();
+                dash_x += dash * 1.75;
+            }
+            let name = entry.map_or_else(String::new, |entry| entry.name.clone());
+            let wrap = box_width - metrics.padding * 2.0;
+            let height = painter.ui.calc_text_size_with_opts(&name, false, wrap)[1];
+            painter.ui.set_cursor_pos([x + metrics.padding, y + (box_height - height) * 0.5]);
+            let _wrap = painter.ui.push_text_wrap_pos_with_pos(x + metrics.padding + wrap);
+            let _colour = painter.ui.push_style_color(StyleColor::Text, TEXT);
+            painter.ui.text_wrapped(&name);
+        }
+        painter
+            .list
+            .add_rect([x, y], [x + box_width, y + box_height], [0.23, 0.23, 0.24, 1.0])
+            .thickness(3.0)
+            .build();
+        // Under the box: what the information says, else a hint to get it.
+        let summary = media
+            .and_then(|media| media.info.as_ref())
+            .map(crate::game_media::GameInfo::summary)
+            .filter(|summary| !summary.is_empty());
+        let (line, colour) = match summary {
+            Some(summary) => (summary, DIM),
+            None if entry.is_some_and(|entry| entry.resume) => (String::new(), DIM),
+            None => (
+                "No box art yet: Options > Games and 3D profiles > Download from LaunchBox"
+                    .to_owned(),
+                GROUP_TITLE,
+            ),
+        };
+        if !line.is_empty() {
+            painter.ui.set_cursor_pos([left, y + box_height + metrics.padding]);
+            let _wrap = painter.ui.push_text_wrap_pos_with_pos(right);
+            let _colour = painter.ui.push_style_color(StyleColor::Text, colour);
+            painter.ui.text_wrapped(&line);
+        }
+    }
+
+    /// Xnes3D+: the Game info screen: the picture of the game, its box and cartridge on the
+    /// left; its name, details and description on the right.
+    fn draw_game_info(&self, ui: &Ui, _frame: &UiFrame<'_>) {
+        let Some(_window) = full_screen(ui, "##game-info", BACKGROUND) else {
+            return;
+        };
+        let painter = self.painter(ui);
+        let metrics = &self.metrics;
+        painter.title("Game info", "LaunchBox Games Database");
+        let Some(entry) = self.roms.selected_entry() else {
+            painter.hints(layout::hints(Screen::GameInfo));
+            return;
+        };
+        let media = self.media();
+        let info = media.and_then(|media| media.info.clone()).unwrap_or_default();
+        let size = painter.size;
+        let top = metrics.title_band() + metrics.padding;
+        let bottom = size[1] - metrics.hint_band() - metrics.padding;
+        let portrait = size[0] < size[1];
+        let column = if portrait { size[0] - metrics.padding * 2.0 } else { (size[0] * 0.38).round() };
+        let left = metrics.padding;
+        // The pictures: the game on top, the box and the cartridge side by side under it.
+        let frame_box = |x: f32, y: f32, w: f32, h: f32, id: usize, picture: Option<(u32, u32)>, label: &str| {
+            painter
+                .list
+                .add_rect([x, y], [x + w, y + h], [0.05, 0.05, 0.06, 1.0])
+                .filled(true)
+                .build();
+            match picture {
+                Some((pw, ph)) => {
+                    let (iw, ih) = fit_size(
+                        f32::from(u16::try_from(pw).unwrap_or(1)),
+                        f32::from(u16::try_from(ph).unwrap_or(1)),
+                        w - 6.0,
+                        h - 6.0,
+                    );
+                    let ix = x + (w - iw) * 0.5;
+                    let iy = y + (h - ih) * 0.5;
+                    painter
+                        .list
+                        .add_image(imgui::TextureId::new(id), [ix, iy], [ix + iw, iy + ih])
+                        .build();
+                }
+                None => {
+                    let lw = painter.width(label);
+                    painter.text(x + (w - lw) * 0.5, y + (h - metrics.font) * 0.5, GROUP_TITLE, label);
+                }
+            }
+            painter
+                .list
+                .add_rect([x, y], [x + w, y + h], [0.23, 0.23, 0.24, 1.0])
+                .thickness(3.0)
+                .build();
+        };
+        let pictures_height = if portrait { (bottom - top) * 0.45 } else { bottom - top };
+        let shot_height = (pictures_height * 0.58).min(column * 0.75);
+        frame_box(left, top, column, shot_height, SHOT_PICTURE_ID, media.and_then(|m| m.shot), "No picture");
+        let small_top = top + shot_height + metrics.padding;
+        let small_height = (pictures_height - shot_height - metrics.padding).max(metrics.row);
+        let half = (column - metrics.padding) * 0.5;
+        frame_box(left, small_top, half, small_height, COVER_PICTURE_ID, media.and_then(|m| m.cover), "No box art");
+        frame_box(left + half + metrics.padding, small_top, half, small_height, CART_PICTURE_ID, media.and_then(|m| m.cart), "No cartridge");
+        // The text.
+        let (text_left, text_top) = if portrait {
+            (left, top + pictures_height + metrics.padding)
+        } else {
+            (left + column + metrics.padding * 1.5, top)
+        };
+        let text_right = size[0] - metrics.padding;
+        let title = if info.title.is_empty() { entry.name.clone() } else { info.title.clone() };
+        {
+            let _heading = painter.heading.map(|font| ui.push_font(font));
+            ui.set_cursor_pos([text_left, text_top]);
+            let _wrap = ui.push_text_wrap_pos_with_pos(text_right);
+            let _colour = ui.push_style_color(StyleColor::Text, TEXT);
+            ui.text_wrapped(&title);
+        }
+        let mut details: Vec<(&str, String)> = Vec::new();
+        for (label, value) in [
+            ("Released", &info.year),
+            ("Players", &info.players),
+            ("Developer", &info.developer),
+            ("Publisher", &info.publisher),
+            ("Genre", &info.genre),
+        ] {
+            if !value.is_empty() {
+                details.push((label, value.clone()));
+            }
+        }
+        let y = ui.cursor_pos()[1] + metrics.padding * 0.5;
+        ui.set_cursor_pos([text_left, y]);
+        let _wrap = ui.push_text_wrap_pos_with_pos(text_right);
+        for (label, value) in &details {
+            ui.set_cursor_pos([text_left, ui.cursor_pos()[1]]);
+            let _dim = ui.push_style_color(StyleColor::Text, DIM);
+            ui.text(format!("{label}:"));
+            ui.same_line();
+            let _text = ui.push_style_color(StyleColor::Text, TEXT);
+            ui.text_wrapped(value);
+        }
+        let y = ui.cursor_pos()[1] + metrics.padding * 0.5;
+        painter
+            .list
+            .add_rect([text_left, y], [text_right, y + 3.0], NES_RED)
+            .filled(true)
+            .build();
+        ui.set_cursor_pos([text_left, y + metrics.padding * 0.8]);
+        let overview = if info.overview.is_empty() {
+            if media.and_then(|media| media.info.as_ref()).is_some() {
+                "No description for this game.".to_owned()
+            } else {
+                "No information yet. Options > Games and 3D profiles > Download from LaunchBox \
+                 fetches it for every game of your list."
+                    .to_owned()
+            }
+        } else {
+            info.overview.clone()
+        };
+        // The description is cut where the hints start.
+        let overview_top = ui.cursor_pos()[1];
+        let _colour = ui.push_style_color(StyleColor::Text, DIM);
+        painter.list.with_clip_rect_intersect([text_left, overview_top], [text_right, bottom], || {
+            ui.text_wrapped(&overview);
+        });
+        painter.hints(layout::hints(Screen::GameInfo));
     }
 
     fn draw_game_options(&self, ui: &Ui, frame: &UiFrame<'_>) {
@@ -2312,4 +2549,14 @@ mod overlay_window_tests {
         // Wrapping round to the last row shows the end.
         assert_eq!((6, 10), overlay_window(&rows, 9, 0, 4.0));
     }
+}
+
+/// Xnes3D+: the largest size of a `width` x `height` picture that fits `room_width` x
+/// `room_height`, keeping its shape.
+fn fit_size(width: f32, height: f32, room_width: f32, room_height: f32) -> (f32, f32) {
+    if width <= 0.0 || height <= 0.0 {
+        return (room_width, room_height);
+    }
+    let scale = (room_width / width).min(room_height / height);
+    ((width * scale).round(), (height * scale).round())
 }

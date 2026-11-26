@@ -100,6 +100,14 @@ pub fn help(row: OptionRow) -> Option<&'static str> {
         OptionRow::Controls => "Which button does what.",
         OptionRow::Achievements => "Your RetroAchievements account and its settings.",
         OptionRow::Reset => "Puts every setting on this page back to its default.",
+        OptionRow::Android(crate::android_bridge::AndroidAction::DownloadMedia) => {
+            "Downloads the box art, pictures and information of every game in your list from \
+             the LaunchBox Games Database. Press R2 on a game to see them."
+        }
+        OptionRow::Android(crate::android_bridge::AndroidAction::EsDeMedia) => {
+            "Copies the box art and information ES-DE already downloaded for your NES and \
+             Famicom games. Nothing is downloaded."
+        }
         OptionRow::Setting(id) => return setting_help(id),
         OptionRow::Page(page) => return page_help(page),
         _ => return None,
