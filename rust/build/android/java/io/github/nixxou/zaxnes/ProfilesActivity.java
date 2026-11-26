@@ -46,7 +46,9 @@ public class ProfilesActivity extends Activity {
     static final int ACTION_SAVES_FOLDER = 6;
     /** Xnes3D+: Options > Check for updates. */
     static final int ACTION_UPDATES = 7;
-    static final int LAST_ACTION = ACTION_UPDATES;
+    /** Xnes3D+: the box art and information media-request.txt asks for (see GameMedia). */
+    static final int ACTION_MEDIA = 8;
+    static final int LAST_ACTION = ACTION_MEDIA;
 
     /** Where the saves folder is kept; ZaxnesActivity passes it to the native side as --saves. */
     static final String PREFS = "zaxnes_plus";
@@ -97,6 +99,7 @@ public class ProfilesActivity extends Activity {
             case ACTION_COPY_PROFILES: copyNow(); break;
             case ACTION_SAVES_FOLDER: forSaves = true; chooseRomFolder(); break;
             case ACTION_UPDATES: checkForUpdates(); break;
+            case ACTION_MEDIA: getMedia(); break;
             default: finish();
         }
     }
@@ -380,6 +383,158 @@ public class ProfilesActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    // ---- box art and information (Xnes3D+) -------------------------------------------------
+
+    private void getMedia() {
+        final GameMedia.Request request = GameMedia.take(this);
+        if (request == null || request.roms.isEmpty()) {
+            showResult("No games", "There are no games in your list to get box art for.");
+            return;
+        }
+        if ("pick".equals(request.source)) {
+            pickEntry(request.roms.get(0));
+            return;
+        }
+        final boolean esde = "esde".equals(request.source);
+        final AlertDialog working = dialog()
+            .setTitle(esde ? "Copying from ES-DE..." : "Getting box art and game info...")
+            .setMessage("Starting...")
+            .setCancelable(false)
+            .show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                GameMedia.Progress progress = new GameMedia.Progress() {
+                    @Override
+                    public void at(final int done, final int total, final String game) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                working.setMessage((done + 1) + " of " + total + "\n" + game);
+                            }
+                        });
+                    }
+                };
+                final GameMedia.Result r = esde
+                    ? GameMedia.fromEsDe(ProfilesActivity.this, request, progress)
+                    : GameMedia.fromLaunchBox(ProfilesActivity.this, request, progress);
+                GameMedia.done(ProfilesActivity.this);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        working.dismiss();
+                        if (r.error != null) {
+                            showResult("Box art not updated", r.error);
+                            return;
+                        }
+                        StringBuilder text = new StringBuilder();
+                        text.append(r.found).append(r.found == 1 ? " game" : " games").append(" found, ")
+                            .append(r.pictures).append(r.pictures == 1 ? " picture" : " pictures").append(" saved.");
+                        if (r.missing > 0) {
+                            text.append("\n\nNot found (press R2 on a game, then Y, to pick it by hand):\n").append(r.notFound);
+                        }
+                        showResult("Box art and game info", text.toString().trim());
+                    }
+                });
+            }
+        }).start();
+    }
+
+    /** Lets the player pick the LaunchBox entry of one game by searching the index. */
+    private void pickEntry(final String rom) {
+        final AlertDialog loading = dialog()
+            .setTitle("Loading the LaunchBox list...")
+            .setMessage("One moment.")
+            .setCancelable(false)
+            .show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                List<GameMedia.Game> index = null;
+                try {
+                    index = GameMedia.index(ProfilesActivity.this);
+                } catch (Exception ignored) {
+                    // said below
+                }
+                final List<GameMedia.Game> found = index;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        loading.dismiss();
+                        if (found == null) {
+                            showResult("No LaunchBox list", "The list couldn't be downloaded. Check the connection and try again.");
+                            return;
+                        }
+                        showSearch(rom, found);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void showSearch(final String rom, final List<GameMedia.Game> index) {
+        final android.widget.LinearLayout layout = new android.widget.LinearLayout(this);
+        layout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        final android.widget.EditText query = new android.widget.EditText(this);
+        String start = GameMedia.key(rom).replaceAll("\\([^)]*\\)", "").replaceAll("\\[[^\\]]*\\]", "").trim();
+        query.setText(start);
+        query.setSingleLine(true);
+        layout.addView(query);
+        final android.widget.ListView list = new android.widget.ListView(this);
+        final List<GameMedia.Game> shown = new ArrayList<>(GameMedia.search(index, start, 40));
+        final android.widget.ArrayAdapter<GameMedia.Game> adapter =
+            new android.widget.ArrayAdapter<>(this, android.R.layout.simple_list_item_1, shown);
+        list.setAdapter(adapter);
+        layout.addView(list, new android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 600));
+        final AlertDialog picker = dialog()
+            .setTitle("Which game is " + GameMedia.key(rom) + "?")
+            .setView(layout)
+            .setNegativeButton("Cancel", finishOnClick())
+            .setOnCancelListener(finishOnCancel())
+            .show();
+        query.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int a, int b, int c) {}
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                shown.clear();
+                shown.addAll(GameMedia.search(index, s.toString(), 40));
+                adapter.notifyDataSetChanged();
+            }
+        });
+        list.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(android.widget.AdapterView<?> parent, android.view.View view, int position, long id) {
+                final GameMedia.Game game = shown.get(position);
+                picker.dismiss();
+                final AlertDialog working = dialog()
+                    .setTitle("Getting " + game.name + "...")
+                    .setMessage("Its box art, pictures and information.")
+                    .setCancelable(false)
+                    .show();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        GameMedia.write(ProfilesActivity.this, rom, game);
+                        GameMedia.done(ProfilesActivity.this);
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                working.dismiss();
+                                finish();
+                            }
+                        });
+                    }
+                }).start();
+            }
+        });
     }
 
     // ---- updates (Xnes3D+) ------------------------------------------------------------------

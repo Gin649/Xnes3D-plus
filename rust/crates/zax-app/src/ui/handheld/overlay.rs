@@ -38,7 +38,21 @@ pub enum OverlayItem {
     WebManageCache,
     /// Leave the application (not in the web build: a page has no launcher to go back to).
     ExitToLauncher,
+    /// Xnes3D+: the page of the rows used less often (the camera, the widescreen, the hacks,
+    /// the achievements, leaving the app). B comes back from it.
+    More,
 }
+
+/// Xnes3D+: the rows of the menu's first page, the ones used most, in order.
+pub const MAIN_ITEMS: [OverlayItem; 7] = [
+    OverlayItem::Resume,
+    OverlayItem::SaveState,
+    OverlayItem::LoadState,
+    OverlayItem::Speed,
+    OverlayItem::Options,
+    OverlayItem::More,
+    OverlayItem::QuitToList,
+];
 
 /// The rows, in order.
 pub const ITEMS: [OverlayItem; 14] = [
@@ -127,6 +141,8 @@ pub struct OverlayModel {
     achievements: bool,
     /// Whether the menu is the web build's: its page's rows, no exit to a launcher.
     web: bool,
+    /// Xnes3D+: whether the More page is shown.
+    more: bool,
 }
 
 impl Default for OverlayModel {
@@ -146,6 +162,7 @@ impl OverlayModel {
             speed: 10,
             achievements: false,
             web: crate::web_bridge::active(),
+            more: false,
         }
     }
 
@@ -162,8 +179,13 @@ impl OverlayModel {
     /// The rows shown, in order.
     #[must_use]
     pub fn items(&self) -> Vec<OverlayItem> {
+        // Xnes3D+: the first page holds the rows used most; the others are under More.
+        if !self.more {
+            return MAIN_ITEMS.to_vec();
+        }
         ITEMS
             .into_iter()
+            .filter(|item| !MAIN_ITEMS.contains(item))
             .filter(|item| self.achievements || *item != OverlayItem::Achievements)
             .filter(|item| match item {
                 OverlayItem::WebOpenRom
@@ -219,6 +241,13 @@ impl OverlayModel {
     /// Opens the menu again on its first row; the slot and the camera stay.
     pub const fn reopen(&mut self) {
         self.selected = 0;
+        self.more = false;
+    }
+
+    /// Xnes3D+: whether the More page is shown.
+    #[must_use]
+    pub const fn in_more(&self) -> bool {
+        self.more
     }
 
     /// One press of a button.
@@ -231,6 +260,18 @@ impl OverlayModel {
             PadButton::Down => self.selected = (self.selected + 1) % self.items().len(),
             PadButton::Left => return self.step(-1),
             PadButton::Right => return self.step(1),
+            // Xnes3D+: A on More opens its page, B comes back from it.
+            PadButton::A if self.selected() == OverlayItem::More => {
+                self.more = true;
+                self.selected = 0;
+            }
+            PadButton::B if self.more => {
+                self.more = false;
+                self.selected = MAIN_ITEMS
+                    .iter()
+                    .position(|item| *item == OverlayItem::More)
+                    .unwrap_or(0);
+            }
             PadButton::A => return Some(self.activate()),
             PadButton::B | PadButton::Menu => return Some(OverlayCommand::Resume),
             _ => {}
@@ -290,6 +331,8 @@ impl OverlayModel {
                 OverlayCommand::WebDialog(crate::web_bridge::WebDialog::Storage)
             }
             OverlayItem::ExitToLauncher => OverlayCommand::ExitToLauncher,
+            // Opened in `handle`; never reached.
+            OverlayItem::More => OverlayCommand::Resume,
         }
     }
 }

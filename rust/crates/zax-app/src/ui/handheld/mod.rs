@@ -199,6 +199,9 @@ pub struct HandheldUi {
     pictures: Vec<PictureUpdate>,
     /// Xnes3D+: the media of the selected game, once read.
     media: Option<ShownMedia>,
+    /// Xnes3D+: the game being started and how long its cartridge animation has run, in
+    /// seconds, while it runs.
+    launch_animation: Option<(String, f32)>,
     /// Whether the host waits for an answer to a question, which the interface then asks.
     confirming: bool,
     /// Where the save state screen goes back to: the in-game menu, or the game when a shortcut
@@ -320,6 +323,7 @@ impl HandheldUi {
             body_font: None,
             shown_picture: None,
             media: None,
+            launch_animation: None,
             pictures: Vec::new(),
             confirming: false,
             zones: RefCell::new(Vec::new()),
@@ -1125,6 +1129,23 @@ impl HandheldUi {
             }
             return;
         }
+        // Xnes3D+: the chiptune sounds of the interface on its screens (not in a game).
+        if self.screen != Screen::InGame {
+            let sound = match button {
+                PadButton::Up | PadButton::Down | PadButton::Left | PadButton::Right => {
+                    Some(crate::audio::UiSound::Move)
+                }
+                PadButton::A | PadButton::Start => Some(crate::audio::UiSound::Confirm),
+                PadButton::B => Some(crate::audio::UiSound::PageChange),
+                PadButton::L1 | PadButton::R1 | PadButton::L2 | PadButton::R2 => {
+                    Some(crate::audio::UiSound::TabChange)
+                }
+                _ => None,
+            };
+            if let (Some(sound), Some(mixer)) = (sound, frame.host.mixer_mut()) {
+                mixer.play_sound(sound);
+            }
+        }
         match self.screen {
             // Xnes3D+: with no game listed, A picks the ROM folder (Android).
             Screen::Home
@@ -1266,6 +1287,14 @@ impl HandheldUi {
                     Some(id) => host.launch_rom_with_profile(&rom, &id),
                     None => host.enqueue(Command::OpenRom, CommandArgs::of_text(&rom)),
                 }
+                // Xnes3D+: the cartridge slides into the console while the game loads.
+                let name = self
+                    .roms
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.path == path)
+                    .map_or_else(String::new, |entry| entry.name.clone());
+                self.launch_animation = Some((name, 0.0));
                 self.note_study(&path, host);
             }
             RomListCommand::ChooseProfile(path) => {

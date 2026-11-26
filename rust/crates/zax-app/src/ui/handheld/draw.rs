@@ -932,8 +932,102 @@ impl HandheldUi {
             self.draw_confirmation(ui, question);
         }
         self.draw_exit_hold(ui);
+        self.draw_launch_animation(ui);
         let margin = self.metrics.hint_band() + self.metrics.padding;
         ZaxUi::draw_notification(ui, frame.host, margin);
+    }
+
+    /// Xnes3D+: the cartridge sliding into a grey console, its power light coming on, the name
+    /// of the game under it, over everything for a moment when a game starts; then it fades.
+    fn draw_launch_animation(&mut self, ui: &Ui) {
+        const SECONDS: f32 = 1.1;
+        const FADE: f32 = 0.3;
+        let Some((name, t)) = self.launch_animation.as_mut().map(|(name, elapsed)| {
+            *elapsed += ui.io().delta_time.min(0.1);
+            (name.clone(), *elapsed)
+        }) else {
+            return;
+        };
+        if t >= SECONDS {
+            self.launch_animation = None;
+            return;
+        }
+        let alpha = if t > SECONDS - FADE { (SECONDS - t) / FADE } else { 1.0 };
+        let fade = |colour: [f32; 4]| [colour[0], colour[1], colour[2], colour[3] * alpha];
+        let list = ui.get_foreground_draw_list();
+        let size = ui.io().display_size;
+        let metrics = self.metrics;
+        list.add_rect([0.0, 0.0], size, fade([0.07, 0.07, 0.08, 1.0]))
+            .filled(true)
+            .build();
+        // The console, a little under the middle; its slot on top.
+        let width = (size[0] * 0.42).min(size[1] * 0.9);
+        let height = width * 0.36;
+        let left = (size[0] - width) * 0.5;
+        let top = size[1] * 0.5 - height * 0.2;
+        let cart_width = width * 0.48;
+        let cart_height = width * 0.36;
+        let cart_left = (size[0] - cart_width) * 0.5;
+        // The cartridge comes down over the first 60 % of the time, with a small bounce.
+        let travel = (t / (SECONDS * 0.6)).min(1.0);
+        let eased = 1.0 - (1.0 - travel) * (1.0 - travel);
+        let bounce = if travel >= 1.0 { 0.0 } else { (travel * std::f32::consts::PI).sin() * cart_height * 0.03 };
+        let cart_bottom_in = top + height * 0.15;
+        let cart_top = cart_bottom_in - cart_height + (1.0 - eased) * -cart_height * 0.9 + bounce;
+        list.add_rect([cart_left, cart_top], [cart_left + cart_width, cart_bottom_in], fade([0.56, 0.56, 0.58, 1.0]))
+            .filled(true)
+            .build();
+        let label_pad = cart_width * 0.1;
+        list.add_rect(
+            [cart_left + label_pad, cart_top + label_pad],
+            [cart_left + cart_width - label_pad, cart_top + cart_height * 0.68],
+            fade([0.05, 0.05, 0.06, 1.0]),
+        )
+        .filled(true)
+        .build();
+        list.add_rect([left, top], [left + width, top + height], fade(TITLE_BAND))
+            .filled(true)
+            .build();
+        list.add_rect([left, top + height], [left + width, top + height + metrics.padding * 0.8], fade(BAR))
+            .filled(true)
+            .build();
+        // The slot, then the console's ridges.
+        list.add_rect(
+            [cart_left - width * 0.03, top],
+            [cart_left + cart_width + width * 0.03, top + height * 0.12],
+            fade(BACKGROUND),
+        )
+        .filled(true)
+        .build();
+        let line = (height * 0.035).max(2.0);
+        let mut y = top + height * 0.3;
+        while y + line < top + height * 0.55 {
+            list.add_rect([left + width * 0.06, y], [left + width * 0.94, y + line], fade(RIDGE))
+                .filled(true)
+                .build();
+            y += line * 2.3;
+        }
+        // POWER and RESET, and the light that comes on once the cartridge is in.
+        let button_top = top + height * 0.66;
+        let button_height = height * 0.18;
+        for index in 0..2 {
+            #[allow(clippy::cast_precision_loss)] // two buttons
+            let x = left + width * 0.08 + index as f32 * width * 0.2;
+            list.add_rect([x, button_top], [x + width * 0.16, button_top + button_height], fade(BAR))
+                .filled(true)
+                .build();
+        }
+        let led = if travel >= 1.0 { NES_RED } else { [0.3, 0.08, 0.1, 1.0] };
+        list.add_circle([left + width * 0.5, button_top + button_height * 0.5], height * 0.05, fade(led))
+            .filled(true)
+            .build();
+        // The name of the game under the console.
+        let name_width = ui.calc_text_size(&name)[0];
+        list.add_text(
+            [(size[0] - name_width) * 0.5, top + height + metrics.padding * 2.0],
+            fade(TEXT),
+            &name,
+        );
     }
 
     fn painter<'ui>(&'ui self, ui: &'ui Ui) -> Painter<'ui> {
@@ -1731,11 +1825,32 @@ impl HandheldUi {
         let rows: f32 = heights[first..last].iter().sum();
         let panel_height = metrics.title_band() + rows + metrics.padding;
         let top = ((size[1] - metrics.hint_band() - panel_height) * 0.5).max(0.0);
+        // Xnes3D+: square corners, a grey title band with the red stripe and a grey frame.
+        painter
+            .list
+            .add_rect([left + 6.0, top + 6.0], [left + panel_width + 6.0, top + panel_height + 6.0], [0.0, 0.0, 0.0, 1.0])
+            .filled(true)
+            .build();
         painter
             .list
             .add_rect([left, top], [left + panel_width, top + panel_height], PANEL)
             .filled(true)
-            .rounding(metrics.padding)
+            .build();
+        let band = metrics.title_band();
+        painter
+            .list
+            .add_rect([left, top], [left + panel_width, top + band], TITLE_BAND)
+            .filled(true)
+            .build();
+        painter
+            .list
+            .add_rect([left, top + band - (metrics.padding * 0.3).max(2.0)], [left + panel_width, top + band], NES_RED)
+            .filled(true)
+            .build();
+        painter
+            .list
+            .add_rect([left, top], [left + panel_width, top + panel_height], TITLE_BAND)
+            .thickness(3.0)
             .build();
         self.draw_overlay_rows(&painter, frame, (left, top, panel_width), (first, last));
         // Triangles drawn, not glyphs: the interface's face may lack them.
@@ -1749,7 +1864,7 @@ impl HandheldUi {
                     [x - half, y - half * 0.3],
                     [x + half, y - half * 0.3],
                     [x, y - half * 1.5],
-                    DIM,
+                    TITLE_DIM,
                 )
                 .filled(true)
                 .build();
@@ -1761,7 +1876,7 @@ impl HandheldUi {
                     [x - half, y + half * 0.3],
                     [x + half, y + half * 0.3],
                     [x, y + half * 1.5],
-                    DIM,
+                    TITLE_DIM,
                 )
                 .filled(true)
                 .build();
@@ -1779,12 +1894,12 @@ impl HandheldUi {
         let metrics = &self.metrics;
         {
             let _heading = painter.heading.map(|font| painter.ui.push_font(font));
-            painter.text(
-                left + metrics.padding,
-                top + metrics.padding,
-                FOCUS,
-                &strings::get(keys::HANDHELD_MENU_TITLE),
-            );
+            let title = if self.overlay.in_more() {
+                "More".to_owned()
+            } else {
+                strings::get(keys::HANDHELD_MENU_TITLE)
+            };
+            painter.text(left + metrics.padding, top + metrics.padding, TITLE_TEXT, &title);
         }
         let mut row_top = top + metrics.title_band();
         for (index, item) in self
@@ -1897,6 +2012,8 @@ impl HandheldUi {
             OverlayItem::WebImportProfile => keys::HANDHELD_MENU_WEB_IMPORT_PROFILE,
             OverlayItem::WebManageCache => keys::HANDHELD_MENU_WEB_MANAGE_CACHE,
             OverlayItem::ExitToLauncher => keys::HANDHELD_MENU_EXIT,
+            // Xnes3D+: plain English, as the fork's other texts.
+            OverlayItem::More => "More",
         })
     }
 
@@ -1914,6 +2031,7 @@ impl HandheldUi {
                     f64::from(self.overlay.speed()) / 10.0
                 )
             ),
+            OverlayItem::More => ">".to_owned(),
             OverlayItem::Widescreen | OverlayItem::Hacks if !playing_with_hacks(frame.host) => {
                 strings::get(keys::HANDHELD_ZAXNES_ONLY)
             }
