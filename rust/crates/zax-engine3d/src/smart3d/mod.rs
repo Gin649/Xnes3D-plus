@@ -41,7 +41,9 @@ use crate::segmenter::SegmentContext;
 use crate::settings::{RenderAlgorithm, ZLayer};
 use crate::vectors::Cell;
 
+mod characters;
 mod hud;
+mod scenery;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -53,6 +55,8 @@ pub struct Memory {
     sky: Option<u8>,
     /// The status bar sprites.
     hud: hud::HudWatch,
+    /// The floors, the decoration and the distant bands.
+    scenery: scenery::Scenery,
 }
 
 impl Memory {
@@ -103,6 +107,8 @@ pub enum Kind {
     Sprite,
     /// A sprite the game draws behind the background.
     SpriteBehind,
+    /// Xnes3D+: a small sprite on its own: a bullet, a spark.
+    Effect,
     /// A mostly empty background shape.
     Sparse,
     /// A background shape neither sparse nor solid.
@@ -130,6 +136,9 @@ const STATUS_BAR_MIN_COLUMNS: i32 = 1;
 const STATUS_BAR_TOP_BAND: i32 = 64;
 const STATUS_BAR_BOTTOM_BAND: i32 = 176;
 
+/// The depth of solid scenery, the thickest a background piece gets.
+const SOLID_DEPTH: i32 = 12;
+
 /// The 3D settings of each kind.
 pub fn apply(kind: Kind, instance: &mut PatternInstance) {
     let (depth, layer) = match kind {
@@ -137,12 +146,13 @@ pub fn apply(kind: Kind, instance: &mut PatternInstance) {
         // thick, solid scenery half as thick again, the backdrop one layer further back.
         Kind::Sprite => (12, ZLayer::L1),
         Kind::SpriteBehind => (4, ZLayer::L2),
+        Kind::Effect => (4, ZLayer::L1),
         // Thin but still in front: small shapes such as the letters of a word are each a shape,
         // and some letters are sparse and some not, so moving the sparse ones back would break
         // words apart. Only large backdrops go to the back layers.
         Kind::Sparse => (1, ZLayer::L1),
         Kind::Medium => (6, ZLayer::L1),
-        Kind::Solid => (12, ZLayer::L1),
+        Kind::Solid => (SOLID_DEPTH, ZLayer::L1),
         Kind::Backdrop => (2, ZLayer::L4),
         Kind::StatusBar => (1, ZLayer::L1),
     };
@@ -159,7 +169,13 @@ pub fn apply(kind: Kind, instance: &mut PatternInstance) {
 pub fn classify(frame: &ConversionFrame, shape: ShapeId) -> Kind {
     let data = frame.shape(shape);
     if !data.background() {
-        return if data.hidden() { Kind::SpriteBehind } else { Kind::Sprite };
+        return if data.hidden() {
+            Kind::SpriteBehind
+        } else if characters::is_effect(frame, shape) {
+            Kind::Effect
+        } else {
+            Kind::Sprite
+        };
     }
     if is_status_bar(frame, shape, playfield_offset(frame)) {
         return Kind::StatusBar;
@@ -461,6 +477,23 @@ pub(crate) fn adjust_frame(frame: &mut ConversionFrame, memory: &mut Memory, too
     for pattern in memory.hud.watch(frame, playfield) {
         tools.remake(pattern, Kind::StatusBar);
     }
+    // The floors under the characters' feet become solid, once.
+    let figures = characters::figures(frame, &memory.hud.patterns);
+    let sky = memory.sky;
+    for pattern in memory.scenery.watch(frame, &figures, sky) {
+        let thin = tools
+            .patterns
+            .get(pattern)
+            .and_then(|pattern| pattern.instances().first())
+            .is_some_and(|instance| instance.depth < SOLID_DEPTH && instance.cast_shadow);
+        if thin {
+            tools.remake(pattern, Kind::Solid);
+        }
+    }
+    memory
+        .scenery
+        .watch_bands(frame, playfield.map(|(x, _)| x));
+    memory.scenery.push_back(frame);
     push_sky_back(frame, memory);
     raise_sprites(frame, memory);
 }
