@@ -5,8 +5,8 @@
 # Xnes3D+
 
 **Xnes3D+** is a 3D NES emulator for Android. It plays your NES games in 3D, with an NES-style
-interface made for handhelds and controllers. It is built on [Zaxnes](https://github.com/nixxou/zaxnes),
-nixxou's free NES emulator, and keeps everything Zaxnes does: the 3D scenes, 3dSen profiles,
+interface made for handhelds and controllers. It is built on [Zaxnes](https://github.com/nixxou/zaxnes) 0.6.1,
+nixxou's free NES emulator, and keeps what Zaxnes does: the 3D scenes, 3dSen profiles,
 widescreen, RetroAchievements and shaders. For those, see the [Zaxnes README](../README.md).
 
 > **Xnes3D+ is a personal project, not an official Zaxnes release.** It is not affiliated with
@@ -20,6 +20,16 @@ widescreen, RetroAchievements and shaders. For those, see the [Zaxnes README](..
   the status bar (score, lives, health) stays a flat, readable panel. It works from what the NES
   itself tells the emulator, so it needs nothing per game. A 3D profile, when there is one, is
   always used instead.
+- **Smart 3D learns as you play.** The sky stays behind the scenery even when buildings fill the
+  screen. Status bars drawn with sprites stay flat, bullets and sparks are thinner, the scenery
+  characters stand on becomes solid floor, and decoration and slower-scrolling distant layers
+  move back. What it learns is kept for each game, so the next time it looks right from the
+  start. **Reset Smart 3D** in a game's **Game options** makes it start over.
+- **Box art and game info.** Covers and details for NES and Famicom games come from LaunchBox,
+  shown beside the game list and on the Resume row for your last game.
+- **A clear game list.** Region tags like (USA) or (Europe) are hidden, long titles wrap neatly,
+  and each game shows its 3D profile (or Smart 3D) and your RetroAchievements progress
+  ("RA 45%").
 - **An NES look.** Charcoal and black with the console's red stripe, a pixel font (Pixelify Sans),
   big rows and round button hints. One icon: everything is inside the app.
 - **Your own folders.** Point the game list at the folder your ROMs are already in, and pick
@@ -36,6 +46,8 @@ widescreen, RetroAchievements and shaders. For those, see the [Zaxnes README](..
 - **Installs beside the official Zaxnes.** Xnes3D+ has its own app ID
   (`io.github.gin649.zaxnes`), so both can be installed at once. Each build installs over the
   last one and keeps your profiles, saves and settings.
+- **One engine.** Every game plays on Zaxnes's own core. The NesHawk engine was removed, and
+  games that were set to it play on Zaxnes.
 - **Kept up to date.** Once a week, Xnes3D+ brings in what's new in Zaxnes and builds a new
   version.
 
@@ -45,7 +57,7 @@ repository. The two profiles made for Zaxnes (*Faxanadu* and *Metal Force*, from
 
 ## Download
 
-Get the latest `Xnes3D-…-android-arm64.apk` from the [Releases](https://github.com/Gin649/zaxnes-plus/releases)
+Get the latest `Xnes3D-…-android-arm64.apk` from the [Releases](https://github.com/Gin649/Xnes3D-plus/releases)
 page and install it. It needs Android 7.0 or later on 64-bit ARM (phones, tablets and handhelds
 such as the AYN Thor).
 
