@@ -341,16 +341,30 @@ impl OverlayModel {
 mod tests {
     use super::*;
 
+    /// Selects `item`, on the page it is on (Xnes3D+: the first page or More).
     fn go_to(model: &mut OverlayModel, item: OverlayItem) {
-        while model.selected() != item {
+        let on_main = MAIN_ITEMS.contains(&item);
+        if on_main && model.in_more() {
+            model.handle(PadButton::B);
+        } else if !on_main && !model.in_more() {
+            go_to(model, OverlayItem::More);
+            model.handle(PadButton::A);
+        }
+        for _ in 0..ITEMS.len() + MAIN_ITEMS.len() {
+            if model.selected() == item {
+                return;
+            }
             model.handle(PadButton::Down);
         }
+        panic!("{item:?} is not shown");
     }
 
     #[test]
     fn the_web_menu_has_the_page_s_rows_and_no_exit() {
         let mut model = OverlayModel::new();
         model.set_web(true);
+        go_to(&mut model, OverlayItem::More);
+        model.handle(PadButton::A);
         let items = model.items();
         assert!(!items.contains(&OverlayItem::ExitToLauncher));
         assert_eq!(Some(&OverlayItem::WebManageCache), items.last());
@@ -369,7 +383,7 @@ mod tests {
     fn the_selection_wraps_and_back_resumes() {
         let mut model = OverlayModel::new();
         assert_eq!(None, model.handle(PadButton::Up));
-        assert_eq!(OverlayItem::ExitToLauncher, model.selected());
+        assert_eq!(OverlayItem::QuitToList, model.selected());
         assert_eq!(None, model.handle(PadButton::Down));
         assert_eq!(OverlayItem::Resume, model.selected());
         assert_eq!(Some(OverlayCommand::Resume), model.handle(PadButton::B));

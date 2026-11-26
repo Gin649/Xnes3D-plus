@@ -24,6 +24,7 @@ pub mod plain;
 pub mod pointer;
 pub mod profile_list;
 pub mod rom_list;
+pub mod setup;
 pub mod states;
 
 use std::cell::{Cell, RefCell};
@@ -117,6 +118,8 @@ pub enum Screen {
     InGame,
     /// Xnes3D+: the box art and information of one game, from the list (R2).
     GameInfo,
+    /// Xnes3D+: the setup of the first start (Android).
+    Setup,
 }
 
 /// The list of the bindings and the capture in progress.
@@ -202,6 +205,9 @@ pub struct HandheldUi {
     /// Xnes3D+: the game being started and how long its cartridge animation has run, in
     /// seconds, while it runs.
     launch_animation: Option<(String, f32)>,
+    /// Xnes3D+: the first start's setup, and whether it was looked for yet.
+    setup: setup::SetupModel,
+    setup_checked: bool,
     /// Whether the host waits for an answer to a question, which the interface then asks.
     confirming: bool,
     /// Where the save state screen goes back to: the in-game menu, or the game when a shortcut
@@ -324,6 +330,8 @@ impl HandheldUi {
             shown_picture: None,
             media: None,
             launch_animation: None,
+            setup: setup::SetupModel::default(),
+            setup_checked: false,
             pictures: Vec::new(),
             confirming: false,
             zones: RefCell::new(Vec::new()),
@@ -1212,6 +1220,7 @@ impl HandheldUi {
                 }
             }
             Screen::GameInfo => self.press_game_info(button, frame.host),
+            Screen::Setup => self.press_setup(button, frame.host),
             Screen::States => {
                 let host = &*frame.host;
                 let command = self.states.handle(button, |slot| slot_state(host, slot));
@@ -1613,6 +1622,56 @@ impl HandheldUi {
                 }
             }
         }
+    }
+
+    /// Xnes3D+: shows the setup the first time the interface starts on Android (until its file
+    /// is written, when it ends or is skipped).
+    fn follow_the_setup(&mut self, host: &AppHost) {
+        if self.setup_checked {
+            return;
+        }
+        self.setup_checked = true;
+        if crate::android_bridge::available()
+            && self.screen == Screen::Home
+            && !host.paths().root.join(setup::DONE_FILE).exists()
+        {
+            self.setup = setup::SetupModel::default();
+            self.screen = Screen::Setup;
+        }
+    }
+
+    /// Xnes3D+: a press on the setup screen.
+    fn press_setup(&mut self, button: PadButton, host: &mut AppHost) {
+        let command = match self.setup.handle(button) {
+            Some(setup::SetupCommand::Choose(choice)) => match choice {
+                setup::SetupChoice::Android(action) => {
+                    self.ask_android(action);
+                    None
+                }
+                setup::SetupChoice::Media(source) => {
+                    self.refresh_roms(host);
+                    self.ask_for_media(host, source);
+                    self.setup.next()
+                }
+                setup::SetupChoice::Next => {
+                    // The folder chosen in the first step shows in the list at once.
+                    self.refresh_roms(host);
+                    self.setup.next()
+                }
+            },
+            other => other,
+        };
+        if command == Some(setup::SetupCommand::Finish) {
+            let _ = std::fs::write(host.paths().root.join(setup::DONE_FILE), "1");
+            self.refresh_roms(host);
+            self.screen = Screen::Home;
+        }
+    }
+
+    /// Xnes3D+: the setup screen.
+    #[must_use]
+    pub const fn setup(&self) -> &setup::SetupModel {
+        &self.setup
     }
 
     /// Xnes3D+: a press on the Game info screen.
@@ -2051,7 +2110,7 @@ impl HandheldUi {
                 self.keyboard = Some(KeyboardModel::new(Field::Username, "Player"));
                 self.screen = Screen::Keyboard;
             }
-            Screen::Home | Screen::InGame | Screen::GameInfo => self.screen = screen,
+            Screen::Home | Screen::InGame | Screen::GameInfo | Screen::Setup => self.screen = screen,
         }
     }
 

@@ -144,6 +144,12 @@ const HOME_HINTS: &[Hint] = &[
     hint("L2", keys::HANDHELD_HINT_FAVORITE),
     hint("R2", "Game info"),
 ];
+/// Xnes3D+: the setup of the first start.
+const SETUP_HINTS: &[Hint] = &[
+    hint("A", keys::HANDHELD_HINT_CHOOSE),
+    hint("B", "Previous step"),
+    hint("Start", "Skip the setup"),
+];
 /// Xnes3D+: the Game info screen.
 const GAME_INFO_HINTS: &[Hint] = &[
     hint("A", keys::HANDHELD_HINT_PLAY),
@@ -230,6 +236,7 @@ pub const fn hints(screen: Screen) -> &'static [Hint] {
         Screen::AchievementGrid => ACHIEVEMENT_GRID_HINTS,
         Screen::InGame => &[],
         Screen::GameInfo => GAME_INFO_HINTS,
+        Screen::Setup => SETUP_HINTS,
     }
 }
 

@@ -911,6 +911,7 @@ impl HandheldUi {
         let _body = self.body_font().map(|font| ui.push_font(font));
         self.follow_the_state_picture(frame.host);
         self.follow_the_media(frame.host);
+        self.follow_the_setup(frame.host);
         match self.screen {
             Screen::Home => self.draw_home(ui, frame),
             Screen::GameOptions => self.draw_game_options(ui, frame),
@@ -921,6 +922,7 @@ impl HandheldUi {
             Screen::Overscan => self.draw_overscan(ui, frame),
             Screen::Overlay => self.draw_overlay(ui, frame),
             Screen::GameInfo => self.draw_game_info(ui, frame),
+            Screen::Setup => self.draw_setup(ui, frame),
             Screen::States => self.draw_states(ui, frame),
             Screen::Achievements => self.draw_achievements(ui, frame),
             Screen::Keyboard => self.draw_keyboard(ui),
@@ -1284,6 +1286,92 @@ impl HandheldUi {
             let _colour = painter.ui.push_style_color(StyleColor::Text, colour);
             painter.ui.text_wrapped(&line);
         }
+    }
+
+    /// Xnes3D+: the setup of the first start: the steps as a bar, the step's heading and
+    /// paragraph, then its choices, the selected one on the focus bar.
+    fn draw_setup(&self, ui: &Ui, frame: &UiFrame<'_>) {
+        let Some(_window) = full_screen(ui, "##setup", BACKGROUND) else {
+            return;
+        };
+        let painter = self.painter(ui);
+        let metrics = &self.metrics;
+        let model = self.setup();
+        let step = model.step();
+        let count = super::setup::STEPS.len();
+        painter.title(text::PRODUCT_NAME, &format!("SETUP · STEP {} OF {count}", model.number()));
+        let size = painter.size;
+        let left = metrics.padding * 3.0;
+        let right = size[0] - metrics.padding * 3.0;
+        let mut y = metrics.title_band() + metrics.padding * 1.5;
+        // The steps as a bar: red up to this one, grey after.
+        #[allow(clippy::cast_precision_loss)] // four steps
+        let piece = (right - left - metrics.padding * (count as f32 - 1.0)) / count as f32;
+        for index in 0..count {
+            #[allow(clippy::cast_precision_loss)] // four steps
+            let x = left + index as f32 * (piece + metrics.padding);
+            let colour = if index < model.number() { NES_RED } else { [0.23, 0.23, 0.24, 1.0] };
+            painter
+                .list
+                .add_rect([x, y], [x + piece, y + metrics.padding * 0.6], colour)
+                .filled(true)
+                .rounding(metrics.padding * 0.3)
+                .build();
+        }
+        y += metrics.padding * 1.6;
+        {
+            let _heading = painter.heading.map(|font| ui.push_font(font));
+            painter.text(left, y, TEXT, step.heading);
+        }
+        y += metrics.heading + metrics.padding;
+        ui.set_cursor_pos([left, y]);
+        {
+            let _wrap = ui.push_text_wrap_pos_with_pos(right);
+            let _colour = ui.push_style_color(StyleColor::Text, DIM);
+            ui.text_wrapped(step.text);
+        }
+        y = ui.cursor_pos()[1] + metrics.padding;
+        // The ROM folder chosen, under the first step's paragraph.
+        if model.number() == 1 {
+            let folder = frame.host.settings().get(SettingId::UiRomsFolder).as_text().trim().to_owned();
+            let line = if folder.is_empty() {
+                "No folder chosen yet.".to_owned()
+            } else {
+                format!("Folder: {folder}  ({} games)", self.roms.entries().len())
+            };
+            painter.text(left, y, if folder.is_empty() { GROUP_TITLE } else { PROFILE }, &line);
+            y += metrics.font + metrics.padding;
+        }
+        let row = metrics.font * 2.0 + metrics.padding * 1.2;
+        for (index, choice) in step.choices.iter().enumerate() {
+            let selected = index == model.selected();
+            let (fill, title, sub) = if selected {
+                (FOCUS, ON_FOCUS, [0.29, 0.29, 0.31, 1.0])
+            } else {
+                (BAR, TEXT, DIM)
+            };
+            painter
+                .list
+                .add_rect([left, y], [right, y + row], fill)
+                .filled(true)
+                .build();
+            if selected {
+                painter
+                    .list
+                    .add_rect([left, y], [left + metrics.padding * 0.4, y + row], NES_RED)
+                    .filled(true)
+                    .build();
+            }
+            painter.text(left + metrics.padding * 1.2, y + metrics.padding * 0.4, title, choice.title);
+            painter.text(
+                left + metrics.padding * 1.2,
+                y + metrics.padding * 0.5 + metrics.font,
+                sub,
+                choice.text,
+            );
+            y += row + metrics.padding * 0.4;
+        }
+        painter.hints(layout::hints(Screen::Setup));
     }
 
     /// Xnes3D+: the Game info screen: the picture of the game, its box and cartridge on the
