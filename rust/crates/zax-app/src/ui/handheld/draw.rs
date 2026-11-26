@@ -2404,9 +2404,13 @@ fn home_row_label(entry: &RomEntry) -> String {
 /// Xnes3D+ (owner request): the name without the region tags at its end, such as "(USA)" or
 /// "(USA, Europe)". Other tags, such as "(Rev 1)", stay.
 fn without_region(name: &str) -> &str {
-    const REGIONS: [&str; 12] = [
-        "USA", "Europe", "Japan", "World", "Canada", "Australia", "Asia", "Korea", "Germany",
-        "France", "Spain", "Italy",
+    // The No-Intro region names, then the short GoodNES codes ("(U)", "(JU)").
+    const REGIONS: [&str; 46] = [
+        "USA", "Europe", "Japan", "World", "Asia", "Australia", "Brazil", "Canada", "China",
+        "Denmark", "Finland", "France", "Germany", "Greece", "Hong Kong", "India", "Italy",
+        "Korea", "Mexico", "Netherlands", "Norway", "Poland", "Portugal", "Russia",
+        "Scandinavia", "Spain", "Sweden", "Taiwan", "UK", "United Kingdom", "Unknown", "U", "E",
+        "J", "W", "UE", "JU", "JE", "JUE", "F", "G", "S", "I", "K", "A", "HK",
     ];
     let mut name = name.trim_end();
     while let Some(open) = name.rfind(" (") {
