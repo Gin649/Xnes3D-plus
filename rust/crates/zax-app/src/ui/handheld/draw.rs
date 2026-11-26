@@ -427,6 +427,7 @@ impl Painter<'_> {
                     badges,
                     (right, *colour),
                     x1,
+                    false,
                 ),
             }
         }
@@ -447,7 +448,7 @@ impl Painter<'_> {
         right: (&str, [f32; 4]),
         x1: f32,
     ) {
-        self.row_parts(slot, (selected, focus), left, &[], right, x1);
+        self.row_parts(slot, (selected, focus), left, &[], right, x1, false);
     }
 
     /// One row of a list with `badges` before `right`, left to right (the [W] of a game a
@@ -461,10 +462,15 @@ impl Painter<'_> {
         right: (&str, [f32; 4]),
     ) {
         let x1 = self.size[0] - self.metrics.padding * 0.5;
-        self.row_parts(slot, (selected, FOCUS), left, badges, right, x1);
+        // Xnes3D+ (owner request): on the game list a title too long for its tags keeps the
+        // whole line, and the tags go together on a second line, on the right like the others.
+        self.row_parts(slot, (selected, FOCUS), left, badges, right, x1, true);
     }
 
-    /// One row of a list that ends at `x1`: `left`, then `badges`, then `right`.
+    /// One row of a list that ends at `x1`: `left`, then `badges`, then `right`. When they do
+    /// not fit on one line, `right` goes under `left`: on the left, or with the badges on the
+    /// right when `wrap_right` is set.
+    #[allow(clippy::too_many_arguments)] // One row, its parts, and where they wrap to.
     fn row_parts(
         &self,
         slot: usize,
@@ -473,6 +479,7 @@ impl Painter<'_> {
         badges: &[(&str, [f32; 4])],
         right: (&str, [f32; 4]),
         x1: f32,
+        wrap_right: bool,
     ) {
         let metrics = &self.metrics;
         let top = self.row_top(slot);
@@ -497,10 +504,11 @@ impl Painter<'_> {
                     .build();
             }
         } else {
+            // Xnes3D+: under the whole row, so a row on two lines is not cut in half.
             self.list
                 .add_line(
-                    [x0 + metrics.padding, top + metrics.row - 1.0],
-                    [x1 - metrics.padding, top + metrics.row - 1.0],
+                    [x0 + metrics.padding, top + height - 1.0],
+                    [x1 - metrics.padding, top + height - 1.0],
                     ROW_LINE,
                 )
                 .build();
@@ -513,7 +521,9 @@ impl Painter<'_> {
             (TEXT, right.1)
         };
         let right_width = self.width(right.0);
-        let (right_x, right_y) = if wrapped {
+        let (right_x, right_y) = if wrapped && wrap_right {
+            (x1 - metrics.padding - right_width, y + self.wrap_step())
+        } else if wrapped {
             (x0 + metrics.padding * 2.0, y + self.wrap_step())
         } else {
             (x1 - metrics.padding - right_width, y)
@@ -521,7 +531,7 @@ impl Painter<'_> {
         if !right.0.is_empty() {
             self.text(right_x, right_y, side, right.0);
         }
-        let value_end = if wrapped {
+        let value_end = if wrapped && !wrap_right {
             right_x + right_width + metrics.padding
         } else {
             x1
@@ -536,22 +546,26 @@ impl Painter<'_> {
                 value,
             },
         );
-        let mut clip_to = if right.0.is_empty() || wrapped {
+        // The badges sit just left of `right`, on its line; the title is clipped before them
+        // when they share its line.
+        let badges_on_second_line = wrapped && wrap_right;
+        let badge_y = if badges_on_second_line { right_y } else { y };
+        let mut badge_end = if right.0.is_empty() || (wrapped && !wrap_right) {
             x1
         } else {
             right_x - metrics.padding
         };
         for &(badge, colour) in badges.iter().rev() {
-            let badge_x = clip_to - self.width(badge);
+            let badge_x = badge_end - self.width(badge);
             // On the bright bar the badge sits on a dark pill, so it keeps its own colour.
             if selected {
                 let pad = metrics.padding * 0.3;
                 self.list
                     .add_rect(
-                        [badge_x - pad, y - pad * 0.5],
+                        [badge_x - pad, badge_y - pad * 0.5],
                         [
                             badge_x + self.width(badge) + pad,
-                            y + metrics.font + pad * 0.5,
+                            badge_y + metrics.font + pad * 0.5,
                         ],
                         BAR,
                     )
@@ -559,9 +573,14 @@ impl Painter<'_> {
                     .rounding(pad)
                     .build();
             }
-            self.text(badge_x, y, colour, badge);
-            clip_to = badge_x - metrics.padding;
+            self.text(badge_x, badge_y, colour, badge);
+            badge_end = badge_x - metrics.padding;
         }
+        let clip_to = if badges_on_second_line {
+            x1 - metrics.padding
+        } else {
+            badge_end
+        };
         self.list
             .with_clip_rect_intersect([x0, top], [clip_to, top + metrics.row], || {
                 self.text(x0 + metrics.padding, y, main, left);
@@ -826,7 +845,10 @@ fn achievement_percent(frame: &UiFrame<'_>, path: &std::path::Path) -> Option<St
         .known_game(path)
         .flatten()
         .and_then(KnownGame::percent)
-        .map(|percent| crate::ui::achievements_view::percent_text(percent, 100))
+        .map(|percent| {
+            // Owner request: "RA" in front, so it reads as RetroAchievements progress.
+            format!("RA {}", crate::ui::achievements_view::percent_text(percent, 100))
+        })
 }
 
 /// The achievement selected in the grid, told at `y`: its title and points, its description.
@@ -1139,11 +1161,7 @@ impl HandheldUi {
                 badges.push((percent, PERCENT));
             }
             let label = home_row_label(entry);
-            if badges.is_empty() {
-                painter.row(slot, selected, &label, (&tag.0, colour));
-            } else {
-                painter.row_badged(slot, selected, &label, &badges, (&tag.0, colour));
-            }
+            painter.row_badged(slot, selected, &label, &badges, (&tag.0, colour));
         }
         // "Game options" in cyan when the selected game has some (owner request).
         let own = self
